@@ -1,0 +1,4 @@
+node_modules
+.env
+data/google-token.json
+dist
