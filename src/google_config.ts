@@ -1,12 +1,15 @@
-
+import "dotenv/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { OAuth2Client } from "google-auth-library";
 
 const TOKEN_FILE = path.join(process.cwd(), "data", "google-token.json");
-const {GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI} = process.env;
+const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI } = process.env;
 export const oauth2Client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI);
 export const GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
+import { google } from "googleapis";
+import { createReadStream } from "node:fs";
+
 
 export async function saveTokens(tokens: {
   access_token?: string | null;
@@ -72,3 +75,27 @@ export async function getAccessToken(): Promise<string> {
 
   return token;
 }
+
+
+const clientId = process.env.YOUTUBE_CLIENT_ID;
+const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+const redirectUri = process.env.YOUTUBE_REDIRECT_URI;
+
+if (!clientId || !clientSecret || !redirectUri) {
+  throw new Error("YouTube OAuth configuration is missing");
+}
+
+export const youtubeOAuth = new google.auth.OAuth2(
+  clientId,
+  clientSecret,
+  redirectUri
+);
+
+youtubeOAuth.setCredentials({
+  refresh_token: process.env.YOUTUBE_REFRESH_TOKEN,
+});
+export const youtube = google.youtube({
+  version: "v3",
+  auth: youtubeOAuth,
+});
+

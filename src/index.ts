@@ -1,9 +1,7 @@
 
 import express from "express";
-import dotenv from "dotenv";
-import swaggerUi from "swagger-ui-express";
+import "dotenv/config";
 
-import swaggerSpec from "./swaggr.js";
 import accountRoutes from "./routes/account.routes.js";
 import budgetRoutes from "./routes/budget.routes.js";
 import campaignRoutes from "./routes/campaign.routes.js";
@@ -12,17 +10,17 @@ import adsGroupRouter from "./routes/adsGroup.routes.js";
 import assetsRouter from './routes/assets.routes.js';
 import { loadTokens } from "./google_config.js";
 
-dotenv.config();
+
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
+
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Swagger documentation
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Google Ads routes
 app.use("/google-ads", biddingRouter);
@@ -58,20 +56,19 @@ app.get("/", async (_req, res) => {
             </strong>
           </p>
 
-          ${
-            connected
-              ? `
+          ${connected
+        ? `
                 <p>Google Ads refresh token is already stored.</p>
                 <a href="/google-ads/accounts">
                   Get Accessible Google Ads Accounts
                 </a>
               `
-              : `
+        : `
                 <a href="/auth/google">
-                  Connect Google Ads
+                  Connect Google Ads 
                 </a>
               `
-          }
+      }
         </body>
       </html>
     `);

@@ -1,7 +1,318 @@
 import express from 'express';
 import { getAccessToken } from '../google_config.js'
 const router = express.Router();
+type CampaignType =
+    | "SEARCH"
+    | "DISPLAY"
+    | "SHOPPING"
+    | "VIDEO"
+    | "APP"
+    | "DEMAND_GEN"
+    | "PERFORMANCE_MAX";
 
+type BiddingStrategy =
+    | "MANUAL_CPC"
+    | "MANUAL_CPM"
+    | "MAXIMIZE_CLICKS"
+    | "MAXIMIZE_CONVERSIONS"
+    | "MAXIMIZE_CONVERSION_VALUE"
+    | "TARGET_CPA"
+    | "TARGET_ROAS"
+    | "APP_GOAL_BASED";
+
+type CampaignSetupConfig = {
+    label: string;
+    apiChannelType: string;
+    canCreateViaApi: boolean;
+    campaignStructure: "AD_GROUP" | "ASSET_GROUP";
+    objectives: string[];
+    biddingStrategies: BiddingStrategy[];
+    requiredFields: string[];
+    nextStep: string;
+    limitation?: string;
+};
+
+const CAMPAIGN_SETUP: Record<
+    CampaignType,
+    CampaignSetupConfig
+> = {
+    SEARCH: {
+        label: "Search",
+        apiChannelType: "SEARCH",
+        canCreateViaApi: true,
+        campaignStructure: "AD_GROUP",
+        objectives: ["SALES", "LEADS", "WEBSITE_TRAFFIC"],
+        biddingStrategies: [
+            "MANUAL_CPC",
+            "MAXIMIZE_CLICKS",
+            "MAXIMIZE_CONVERSIONS",
+            "MAXIMIZE_CONVERSION_VALUE",
+            "TARGET_CPA",
+            "TARGET_ROAS",
+        ],
+        requiredFields: ["budgetResourceName"],
+        nextStep: "Create an ad group, keywords and a Responsive Search Ad.",
+    },
+
+    DISPLAY: {
+        label: "Display",
+        apiChannelType: "DISPLAY",
+        canCreateViaApi: true,
+        campaignStructure: "AD_GROUP",
+        objectives: [
+            "SALES",
+            "LEADS",
+            "WEBSITE_TRAFFIC",
+            "AWARENESS",
+        ],
+        biddingStrategies: [
+            "MANUAL_CPC",
+            "MANUAL_CPM",
+            "MAXIMIZE_CLICKS",
+            "MAXIMIZE_CONVERSIONS",
+            "MAXIMIZE_CONVERSION_VALUE",
+            "TARGET_CPA",
+            "TARGET_ROAS",
+        ],
+        requiredFields: ["budgetResourceName"],
+        nextStep: "Create a DISPLAY_STANDARD ad group and a Responsive Display Ad.",
+    },
+
+    SHOPPING: {
+        label: "Shopping",
+        apiChannelType: "SHOPPING",
+        canCreateViaApi: true,
+        campaignStructure: "AD_GROUP",
+        objectives: ["SALES"],
+        biddingStrategies: [
+            "MANUAL_CPC",
+            "MAXIMIZE_CLICKS",
+            "MAXIMIZE_CONVERSIONS",
+            "MAXIMIZE_CONVERSION_VALUE",
+            "TARGET_CPA",
+            "TARGET_ROAS",
+        ],
+        requiredFields: [
+            "budgetResourceName",
+            "merchantCenterId",
+            "campaignPriority",
+        ],
+        nextStep: "Create a Shopping ad group and product listing groups.",
+    },
+
+    VIDEO: {
+        label: "Video",
+        apiChannelType: "VIDEO",
+        canCreateViaApi: false,
+        campaignStructure: "AD_GROUP",
+        objectives: ["AWARENESS", "CONSIDERATION"],
+        biddingStrategies: [],
+        requiredFields: [],
+        nextStep: "Use Demand Gen or Performance Max for supported API-managed video advertising.",
+        limitation:
+            "Existing Video campaigns can be retrieved and reported on, but normal Video campaign creation is not supported by Google Ads API v25.",
+    },
+
+    APP: {
+        label: "App",
+        apiChannelType: "MULTI_CHANNEL",
+        canCreateViaApi: true,
+        campaignStructure: "AD_GROUP",
+        objectives: [
+            "APP_INSTALLS",
+            "APP_ENGAGEMENT",
+            "APP_PRE_REGISTRATION",
+            "IN_APP_ACTIONS",
+            "IN_APP_VALUE",
+        ],
+        biddingStrategies: ["APP_GOAL_BASED"],
+        requiredFields: [
+            "budgetResourceName",
+            "appStore",
+            "appId",
+            "appFocus",
+        ],
+        nextStep: "Create app campaign settings, targeting and app ad assets.",
+    },
+
+    DEMAND_GEN: {
+        label: "Demand Gen",
+        apiChannelType: "DEMAND_GEN",
+        canCreateViaApi: true,
+        campaignStructure: "AD_GROUP",
+        objectives: [
+            "SALES",
+            "LEADS",
+            "WEBSITE_TRAFFIC",
+            "AWARENESS",
+        ],
+        biddingStrategies: [
+            "MAXIMIZE_CLICKS",
+            "TARGET_CPA",
+            "MAXIMIZE_CONVERSIONS",
+            "TARGET_ROAS",
+        ],
+        requiredFields: ["budgetResourceName"],
+        nextStep: "Create an ad group, audience targeting and Demand Gen ads.",
+    },
+
+    PERFORMANCE_MAX: {
+        label: "Performance Max",
+        apiChannelType: "PERFORMANCE_MAX",
+        canCreateViaApi: true,
+        campaignStructure: "ASSET_GROUP",
+        objectives: [
+            "SALES",
+            "LEADS",
+            "WEBSITE_TRAFFIC",
+        ],
+        biddingStrategies: [
+            "MAXIMIZE_CONVERSIONS",
+            "MAXIMIZE_CONVERSION_VALUE",
+        ],
+        requiredFields: ["budgetResourceName"],
+        nextStep: "Create an asset group and attach required creative assets.",
+    },
+};
+
+router.get(
+    "/google-ads/campaigns/setup-options",
+    (req, res) => {
+        const rawType = String(req.query.campaignType ?? "")
+            .trim()
+            .toUpperCase();
+
+        if (rawType && !(rawType in CAMPAIGN_SETUP)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid campaign type",
+                supportedTypes: Object.keys(CAMPAIGN_SETUP),
+            });
+        }
+
+        const campaignTypes = Object.entries(
+            CAMPAIGN_SETUP
+        ).map(([value, config]) => ({
+            value,
+            ...config,
+        }));
+
+        if (!rawType) {
+            return res.json({
+                success: true,
+                campaignTypes,
+            });
+        }
+
+        const config =
+            CAMPAIGN_SETUP[rawType as CampaignType];
+
+        return res.json({
+            success: true,
+            campaignType: rawType,
+            ...config,
+        });
+    }
+);
+router.post("/google-ads/campaigns/create", async (req, res) => {
+    try {
+        const accessToken = await getAccessToken();
+
+        const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID;
+
+        if (!customerId) {
+            return res.status(400).json({
+                message: "Missing GOOGLE_ADS_CUSTOMER_ID",
+            });
+        }
+
+        const campaignType = String(
+            req.body.campaignType ?? "SEARCH"
+        ).toUpperCase() as CampaignType;
+
+        const setup = CAMPAIGN_SETUP[campaignType];
+
+        if (!setup) {
+            return res.status(400).json({
+                success: false,
+                message: "Unsupported campaign type",
+                supportedTypes: Object.keys(CAMPAIGN_SETUP),
+            });
+        }
+
+        if (!setup.canCreateViaApi) {
+            return res.status(400).json({
+                success: false,
+                campaignType,
+                message: setup.limitation,
+                alternatives: ["DEMAND_GEN", "PERFORMANCE_MAX"],
+            });
+        }
+        const {
+            budgetResourceName,
+            campaignName,
+            validateOnly = true,
+        } = req.body;
+
+        if (!budgetResourceName) {
+            return res.status(400).json({
+                message: "Missing budgetResourceName. Create a budget first.",
+            });
+        }
+
+        const response = await fetch(
+            `https://googleads.googleapis.com/v25/customers/${customerId}/campaigns:mutate`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                    "developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
+                },
+                body: JSON.stringify({
+                    operations: [
+                        {
+                            create: {
+                                name: campaignName,
+                                advertisingChannelType: setup.apiChannelType,
+                                status: "PAUSED",
+                                campaignBudget: budgetResourceName,
+                                containsEuPoliticalAdvertising:
+                                    "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+                            },
+                        }
+                    ],
+                    validateOnly,
+                }),
+            },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error("Create campaign error:", JSON.stringify(data, null, 2));
+
+            return res.status(response.status).json(data);
+        }
+
+        return res.json({
+            message: validateOnly
+                ? "Campaign request is valid. Campaign was NOT created."
+                : "Campaign created successfully.",
+            validateOnly,
+            campaignName: name,
+            budgetResourceName,
+            googleResponse: data,
+        });
+    } catch (error) {
+        console.error("Create campaign error:", error);
+
+        return res.status(500).json({
+            message:
+                error instanceof Error ? error.message : "Failed to create campaign",
+        });
+    }
+});
 
 router.get("/google-ads/campaigns", async (_req, res) => {
     try {
@@ -309,91 +620,6 @@ router.post("/google-ads/campaigns/rename", async (req, res) => {
     }
 });
 
-router.post("/google-ads/campaigns/create", async (req, res) => {
-    try {
-        const accessToken = await getAccessToken();
-
-        const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID;
-
-        if (!customerId) {
-            return res.status(400).json({
-                message: "Missing GOOGLE_ADS_CUSTOMER_ID",
-            });
-        }
-
-        const {
-            name = `SaaS Test Campaign ${Date.now()}`,
-            budgetResourceName,
-            validateOnly = true,
-        } = req.body;
-
-        if (!budgetResourceName) {
-            return res.status(400).json({
-                message: "Missing budgetResourceName. Create a budget first.",
-            });
-        }
-
-        const response = await fetch(
-            `https://googleads.googleapis.com/v25/customers/${customerId}/campaigns:mutate`,
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    "Content-Type": "application/json",
-                    "developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
-                },
-                body: JSON.stringify({
-                    operations: [
-                        {
-                            create: {
-                                name,
-                                advertisingChannelType: "SEARCH",
-                                status: "PAUSED",
-                                manualCpc: {},
-                                campaignBudget: budgetResourceName,
-                                networkSettings: {
-                                    targetGoogleSearch: true,
-                                    targetSearchNetwork: true,
-                                    targetContentNetwork: false,
-                                    targetPartnerSearchNetwork: false,
-                                },
-                                containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
-                            },
-                        },
-                    ],
-                    validateOnly,
-                }),
-            },
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            console.error("Create campaign error:", JSON.stringify(data, null, 2));
-
-            return res.status(response.status).json(data);
-        }
-
-        return res.json({
-            message: validateOnly
-                ? "Campaign request is valid. Campaign was NOT created."
-                : "Campaign created successfully.",
-            validateOnly,
-            campaignName: name,
-            budgetResourceName,
-            googleResponse: data,
-        });
-    } catch (error) {
-        console.error("Create campaign error:", error);
-
-        return res.status(500).json({
-            message:
-                error instanceof Error ? error.message : "Failed to create campaign",
-        });
-    }
-});
-
-
 router.post(
     "/google-ads/campaigns/:campaignId/target-cpa",
     async (req, res) => {
@@ -489,6 +715,46 @@ router.post(
                         : "Failed to validate Target CPA",
             });
         }
+    }
+);
+
+router.get(
+    "/google-ads/campaigns/setup-options",
+    (req, res) => {
+        const rawType = String(req.query.campaignType ?? "")
+            .trim()
+            .toUpperCase();
+
+        if (rawType && !(rawType in CAMPAIGN_SETUP)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid campaign type",
+                supportedTypes: Object.keys(CAMPAIGN_SETUP),
+            });
+        }
+
+        const campaignTypes = Object.entries(
+            CAMPAIGN_SETUP
+        ).map(([value, config]) => ({
+            value,
+            ...config,
+        }));
+
+        if (!rawType) {
+            return res.json({
+                success: true,
+                campaignTypes,
+            });
+        }
+
+        const config =
+            CAMPAIGN_SETUP[rawType as CampaignType];
+
+        return res.json({
+            success: true,
+            campaignType: rawType,
+            ...config,
+        });
     }
 );
 

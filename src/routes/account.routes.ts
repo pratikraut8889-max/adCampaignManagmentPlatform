@@ -1,12 +1,12 @@
 import express, { application } from 'express';
 
 import crypto from "node:crypto";
-import { getAccessToken, saveTokens, oauth2Client, GOOGLE_ADS_SCOPE } from '../google_config.js'
+import { getAccessToken, saveTokens, oauth2Client, GOOGLE_ADS_SCOPE, youtubeOAuth } from '../google_config.js'
 
-const accountRoutes = express.Router()
+const router = express.Router()
 const oauthStates = new Set<string>();
 
-accountRoutes.get("/auth/google", (_req, res) => {
+router.get("/auth/google", (_req, res) => {
     const state = crypto.randomBytes(32).toString("hex");
 
     oauthStates.add(state);
@@ -21,7 +21,7 @@ accountRoutes.get("/auth/google", (_req, res) => {
 
     res.redirect(authUrl);
 });
-accountRoutes.get("/auth/google/callback", async (req, res) => {
+router.get("/auth/google/callback", async (req, res) => {
     try {
         const code = req.query.code;
         const state = req.query.state;
@@ -76,7 +76,7 @@ accountRoutes.get("/auth/google/callback", async (req, res) => {
         });
     }
 });
-accountRoutes.get("/google-ads/accounts", async (_req, res) => {
+router.get("/accounts", async (_req, res) => {
     try {
         const accessToken = await getAccessToken();
 
@@ -111,6 +111,66 @@ accountRoutes.get("/google-ads/accounts", async (_req, res) => {
     }
 });
 
+router.get("/youtube/auth", (_req, res) => {
+    const authUrl = youtubeOAuth.generateAuthUrl({
+        access_type: "offline",
+        prompt: "consent",
+        scope: [
+            "https://www.googleapis.com/auth/youtube.upload",
+        ],
+    });
 
-export default accountRoutes;
+    const parsedUrl = new URL(authUrl);
+
+    console.log({
+        clientIdInUrl: Boolean(
+            parsedUrl.searchParams.get("client_id")
+        ),
+        clientIdMatches:
+            parsedUrl.searchParams.get("client_id") ===
+            process.env.YOUTUBE_CLIENT_ID,
+        redirectUriInUrl:
+            parsedUrl.searchParams.get("redirect_uri"),
+    });
+
+    return res.redirect(authUrl);
+});
+
+router.get("/youtube/oauth2callback", async (req, res) => {
+    try {
+        const code = String(req.query.code || "");
+
+        if (!code) {
+            return res.status(400).send(
+                "Authorization code missing"
+            );
+        }
+
+        const { tokens } = await youtubeOAuth.getToken(code);
+
+        if (!tokens.refresh_token) {
+            return res.status(400).send(
+                "Refresh token was not returned. Try re-authorizing."
+            );
+        }
+
+        // Development only: check your backend terminal.
+        console.log(
+            "YOUTUBE_REFRESH_TOKEN=",
+            tokens.refresh_token
+        );
+
+        return res.send(
+            "YouTube authorization successful. Check your backend terminal."
+        );
+    } catch (error) {
+        console.error("OAuth callback failed:", error);
+
+        return res.status(500).send(
+            "Failed to exchange authorization code for tokens."
+        );
+    }
+});
+
+export default router;
 

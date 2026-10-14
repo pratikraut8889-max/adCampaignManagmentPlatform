@@ -5,13 +5,23 @@ import {
   googleAdsRequest,
   GOOGLE_ADS_BASE_URL,
   buildAssetCreate,
-  AssetValidationError
+  AssetValidationError,
+  createGoogleAdsVideoAsset,
+  createAssetAssociation
 } from "../helper/shared.js";
-import { getAccessToken } from "../google_config.js";
-import multer from "multer";
+import { getAccessToken, youtube } from "../google_config.js";
 import { imageSize } from "image-size";
+import { Request, Response } from "express";
+import multer from "multer";
+import path from "node:path";
+import os from "node:os";
+import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { unlink } from "node:fs/promises";
 
 const router = Router();
+const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200 MB for learning
+
 const imageUpload = multer({
   storage: multer.memoryStorage(),
 
@@ -31,332 +41,30 @@ const imageUpload = multer({
   },
 });
 
+const videoUpload = multer({
+  storage: multer.diskStorage({
+    destination: os.tmpdir(),
+    filename: (_req, file, callback) => {
+      callback(
+        null,
+        `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`
+      );
+    },
+  }),
+  limits: {
+    fileSize: MAX_VIDEO_SIZE,
+    files: 1,
+  },
+  fileFilter: (_req, file, callback) => {
+    if (!file.mimetype.startsWith("video/")) {
+      return callback(new Error("Please select a video file"));
+    }
+
+    callback(null, true);
+  },
+});
+
 // Assets Manangement 
-router.get("/assets", async (req, res) => {
-  try {
-    const accessToken = await getAccessToken();
-    const config = getGoogleAdsConfig(res);
-
-    if (!config) return;
-
-    const { customerId, developerToken } = config;
-
-    const type = req.query.type?.toString().toUpperCase();
-
-    const allowedTypes = [
-      "TEXT",
-      "SITELINK",
-      "CALLOUT",
-      "STRUCTURED_SNIPPET",
-      "CALL",
-      "IMAGE",
-    ];
-
-    if (type && !allowedTypes.includes(type)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid asset type",
-        allowedTypes,
-      });
-    }
-
-    let query = `
-  SELECT
-    asset.id,
-    asset.name,
-    asset.resource_name,
-    asset.type,
-    asset.text_asset.text,
-    asset.sitelink_asset.link_text,
-    asset.sitelink_asset.description1,
-    asset.sitelink_asset.description2,
-    asset.callout_asset.callout_text,
-    asset.structured_snippet_asset.header,
-    asset.structured_snippet_asset.values,
-    asset.call_asset.phone_number
-  FROM asset
-`;
-
-    if (type) {
-      query += ` WHERE asset.type = '${type}'`;
-    }
-
-    const responseData: any = await googleAdsRequest(
-      `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
-      accessToken,
-      developerToken,
-      { query },
-    );
-
-
-    // Your helper wraps Google's response under "data".
-    const rows = responseData?.data?.results ?? [];
-
-    const assets = rows.map((row: any) => row.asset).filter(Boolean);
-
-    return res.status(200).json({
-      success: true,
-      total: assets.length,
-      assets,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: getErrorMessage(error),
-    });
-  }
-});
-router.get("/assets/roles", async (req, res) => {
-  try {
-    const accessToken = await getAccessToken();
-    const config = getGoogleAdsConfig(res);
-
-    if (!config) return;
-
-    const { customerId, developerToken } = config;
-
-    const endpoint =
-      `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`;
-
-    const assetIds = [
-      "429571439538",
-      "429571439541",
-      "429571439544",
-      "429571439547",
-      "429571439550",
-    ];
-
-    const ids = assetIds.join(", ");
-
-    const queries = {
-      customer: `
-        SELECT
-          asset.id,
-          asset.text_asset.text,
-          customer_asset.field_type,
-          customer_asset.status
-        FROM customer_asset
-        WHERE asset.id IN (${ids})
-          AND customer_asset.status != 'REMOVED'
-      `,
-      campaign: `
-        SELECT
-          asset.id,
-          asset.text_asset.text,
-          campaign.id,
-          campaign.name,
-          campaign_asset.field_type,
-          campaign_asset.status
-        FROM campaign_asset
-        WHERE asset.id IN (${ids})
-          AND campaign_asset.status != 'REMOVED'
-      `,
-      adGroup: `
-        SELECT
-          asset.id,
-          asset.text_asset.text,
-          ad_group.id,
-          ad_group.name,
-          ad_group_asset.field_type,
-          ad_group_asset.status
-        FROM ad_group_asset
-        WHERE asset.id IN (${ids})
-          AND ad_group_asset.status != 'REMOVED'
-      `,
-    };
-
-    const [customerData, campaignData, adGroupData] =
-      await Promise.all([
-        googleAdsRequest(endpoint, accessToken, developerToken, {
-          query: queries.customer,
-        }),
-        googleAdsRequest(endpoint, accessToken, developerToken, {
-          query: queries.campaign,
-        }),
-        googleAdsRequest(endpoint, accessToken, developerToken, {
-          query: queries.adGroup,
-        }),
-      ]);
-
-    const getResults = (data: any) =>
-      data?.data?.results ?? [];
-
-    const normalize = (
-      rows: any[],
-      associationKey: string,
-      scope: string
-    ) =>
-      rows.map((row: any) => {
-        const association = row[associationKey];
-
-        return {
-          assetId: row.asset?.id,
-          text: row.asset?.textAsset?.text,
-          scope,
-          role: association?.fieldType,
-          status: association?.status,
-          campaignId: row.campaign?.id,
-          campaignName: row.campaign?.name,
-          adGroupId: row.adGroup?.id,
-          adGroupName: row.adGroup?.name,
-        };
-      });
-
-    const assets = [
-      ...normalize(
-        getResults(customerData),
-        "customerAsset",
-        "CUSTOMER"
-      ),
-      ...normalize(
-        getResults(campaignData),
-        "campaignAsset",
-        "CAMPAIGN"
-      ),
-      ...normalize(
-        getResults(adGroupData),
-        "adGroupAsset",
-        "AD_GROUP"
-      ),
-    ];
-
-    return res.status(200).json({
-      success: true,
-      total: assets.length,
-      assets,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: getErrorMessage(error),
-    });
-  }
-});
-
-router.get("/assets/:assetId", async (req, res) => {
-  try {
-    const { assetId } = req.params;
-
-    if (!/^\d+$/.test(assetId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid asset ID",
-      });
-    }
-
-    const accessToken = await getAccessToken();
-    const config = getGoogleAdsConfig(res);
-
-    if (!config) return;
-
-    const { customerId, developerToken } = config;
-
-    // 1. Retrieve the asset itself
-    const assetQuery = `
-      SELECT
-        asset.id,
-        asset.name,
-        asset.resource_name,
-        asset.type
-      FROM asset
-      WHERE asset.id = ${assetId}
-    `;
-
-    const assetResponse: any = await googleAdsRequest(
-      `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
-      accessToken,
-      developerToken,
-      { query: assetQuery }
-    );
-
-    const assetResults = assetResponse?.data?.results ?? [];
-    const asset = assetResults[0]?.asset;
-
-    if (!asset) {
-      return res.status(404).json({
-        success: false,
-        message: "Asset not found",
-      });
-    }
-
-    const assetResourceName =
-      asset.resourceName ??
-      `customers/${customerId}/assets/${assetId}`;
-
-    // 2. Retrieve ad group associations and their statuses
-    const adGroupQuery = `
-      SELECT
-        ad_group.id,
-        ad_group.name,
-        ad_group_asset.asset,
-        ad_group_asset.field_type,
-        ad_group_asset.status,
-        ad_group_asset.primary_status
-      FROM ad_group_asset
-      WHERE ad_group_asset.asset = '${assetResourceName}'
-    `;
-
-    // 3. Retrieve campaign associations and their statuses
-    const campaignQuery = `
-      SELECT
-        campaign.id,
-        campaign.name,
-        campaign_asset.asset,
-        campaign_asset.field_type,
-        campaign_asset.status,
-        campaign_asset.primary_status
-      FROM campaign_asset
-      WHERE campaign_asset.asset = '${assetResourceName}'
-    `;
-
-    const [adGroupResponse, campaignResponse] =
-      await Promise.all([
-        googleAdsRequest(
-          `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
-          accessToken,
-          developerToken,
-          { query: adGroupQuery }
-        ),
-        googleAdsRequest(
-          `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
-          accessToken,
-          developerToken,
-          { query: campaignQuery }
-        ),
-      ]);
-
-    const adGroupResults =
-      adGroupResponse?.data?.results ?? [];
-
-    const campaignResults =
-      campaignResponse?.data?.results ?? [];
-
-    return res.status(200).json({
-      success: true,
-      asset,
-      associations: {
-        adGroups: adGroupResults.map((row: any) => ({
-          adGroup: row.adGroup,
-          fieldType: row.adGroupAsset.fieldType,
-          status: row.adGroupAsset.status,
-          primaryStatus: row.adGroupAsset.primaryStatus,
-        })),
-        campaigns: campaignResults.map((row: any) => ({
-          campaign: row.campaign,
-          fieldType: row.campaignAsset.fieldType,
-          status: row.campaignAsset.status,
-          primaryStatus: row.campaignAsset.primaryStatus,
-        })),
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: getErrorMessage(error),
-    });
-  }
-});
-
 router.post("/assets", async (req, res) => {
   try {
     const type = String(req.body.type ?? "").toUpperCase();
@@ -439,948 +147,8 @@ router.post("/assets", async (req, res) => {
     });
   }
 });
-
-
-// Campaign Association Assets Manangement 
-
-
-router.post(
-  "/campaigns/:campaignId/assets",
-  async (req, res) => {
-    try {
-      const { campaignId } = req.params;
-      const { assetId, fieldType, validateOnly, confirm } =
-        req.body;
-
-      if (
-        !/^\d+$/.test(campaignId) ||
-        !/^\d+$/.test(String(assetId ?? ""))
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid campaignId or assetId",
-        });
-      }
-
-      const allowedFieldTypes = [
-        "SITELINK",
-        "CALLOUT",
-        "STRUCTURED_SNIPPET",
-        "CALL",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-        "AD_IMAGE",
-      ];
-      if (!allowedFieldTypes.includes(fieldType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Unsupported fieldType",
-          allowedFieldTypes,
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true for live association",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/campaignAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              create: {
-                campaign:
-                  `customers/${customerId}/campaigns/${campaignId}`,
-                asset:
-                  `customers/${customerId}/assets/${assetId}`,
-                fieldType,
-                status: "ENABLED",
-              },
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Campaign asset association validated"
-          : "Campaign asset association created",
-        results:
-          response?.data?.results ??
-          response?.data?.data?.results ??
-          [],
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-
-router.get(
-  "/campaigns/:campaignId/assets",
-  async (req, res) => {
-    try {
-      const { campaignId } = req.params;
-
-      if (!/^\d+$/.test(campaignId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid campaign ID",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const query = `
-        SELECT
-  campaign_asset.resource_name,
-  campaign_asset.campaign,
-  campaign_asset.asset,
-  campaign_asset.field_type,
-  campaign_asset.status,
-  asset.id,
-  asset.type
-FROM campaign_asset
-WHERE campaign.id = 24326130621
-  AND asset.id = 429618491423
-        `;
-      // AND campaign_asset.status != 'REMOVED'
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
-        accessToken,
-        developerToken,
-        { query }
-      );
-
-      const results = response?.data?.results ?? [];
-
-      const assets = results.map((row: any) => ({
-        campaign: row.campaign,
-        asset: row.asset,
-        association: {
-          resourceName: row.campaignAsset.resourceName,
-          fieldType: row.campaignAsset.fieldType,
-          status: row.campaignAsset.status,
-          primaryStatus: row.campaignAsset.primaryStatus,
-        },
-      }));
-
-      return res.status(200).json({
-        success: true,
-        campaignId,
-        total: assets.length,
-        assets,
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-router.patch(
-  "/campaigns/:campaignId/assets/:assetId/:fieldType",
-  async (req, res) => {
-    try {
-      const { campaignId, assetId, fieldType } = req.params;
-      const { status, validateOnly, confirm } = req.body;
-
-      if (!/^\d+$/.test(campaignId) ||
-        !/^\d+$/.test(assetId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid campaignId or assetId",
-        });
-      }
-
-      const allowedFieldTypes = [
-        "SITELINK",
-        "CALLOUT",
-        "STRUCTURED_SNIPPET",
-        "CALL",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-      ];
-
-      if (!allowedFieldTypes.includes(fieldType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Unsupported fieldType",
-          allowedFieldTypes,
-        });
-      }
-
-      if (!["ENABLED", "PAUSED"].includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: "Status must be ENABLED or PAUSED",
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true for live updates",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const resourceName =
-        `customers/${customerId}/campaignAssets/` +
-        `${campaignId}~${assetId}~${fieldType}`;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/campaignAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              update: {
-                resourceName,
-                status,
-              },
-              updateMask: "status",
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      const data = response?.data?.data ??
-        response?.data ??
-        response;
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Campaign asset status update validated"
-          : "Campaign asset status updated",
-        results: data?.results ?? [],
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-
-
-router.delete(
-  "/campaigns/:campaignId/assets/:assetId/:fieldType",
-  async (req, res) => {
-    try {
-      const { campaignId, assetId, fieldType } = req.params;
-      const { validateOnly, confirm } = req.body ?? {};
-
-      if (
-        !/^\d+$/.test(campaignId) ||
-        !/^\d+$/.test(assetId)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid campaignId or assetId",
-        });
-      }
-
-      const allowedFieldTypes = [
-        "SITELINK",
-        "CALLOUT",
-        "STRUCTURED_SNIPPET",
-        "CALL",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-      ];
-
-      if (!allowedFieldTypes.includes(fieldType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Unsupported fieldType",
-          allowedFieldTypes,
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true to remove the association",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const resourceName =
-        `customers/${customerId}/campaignAssets/` +
-        `${campaignId}~${assetId}~${fieldType}`;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/campaignAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              remove: resourceName,
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      const data =
-        response?.data?.data ??
-        response?.data ??
-        response;
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Asset association removal validated"
-          : "Asset association removed from campaign",
-        results: data?.results ?? [],
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-
-router.get(
-  "/ad-groups/:adGroupId/assets",
-  async (req, res) => {
-    try {
-      const { adGroupId } = req.params;
-
-      if (!/^\d+$/.test(adGroupId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid ad group ID",
-        });
-      }
-
-      const readFilter = (key: string): string | undefined => {
-        const value = req.query[key];
-
-        if (value === undefined) return undefined;
-
-        if (typeof value !== "string") {
-          throw new Error(`${key} must be a single value`);
-        }
-
-        return value.trim().toUpperCase();
-      };
-
-      const type = readFilter("type");
-      const fieldType = readFilter("fieldType");
-      const status = readFilter("status");
-
-      const allowedTypes = [
-        "CALL",
-        "CALLOUT",
-        "IMAGE",
-        "TEXT",
-        "SITELINK",
-        "STRUCTURED_SNIPPET",
-        "LEAD_FORM",
-        "PROMOTION",
-        "PRICE",
-        "MOBILE_APP",
-        "BUSINESS_MESSAGE",
-        "LOGO",
-        "LONG_HEADLINE",
-        "MARKETING_IMAGE",
-        "CALL_TO_ACTION",
-
-      ];
-
-      const allowedFieldTypes = [
-        "CALL",
-        "CALLOUT",
-        "SITELINK",
-        "STRUCTURED_SNIPPET",
-        "PROMOTION",
-        "PRICE",
-        "MOBILE_APP",
-        "LEAD_FORM",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-        "LOGO",
-        "IMAGE",
-        "AD_IMAGE"
-      ];
-
-      const allowedStatuses = [
-        "ENABLED",
-        "PAUSED",
-        "REMOVED",
-        "ALL",
-      ];
-
-      if (type && !allowedTypes.includes(type)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid asset type",
-          allowedTypes,
-        });
-      }
-
-      if (
-        fieldType &&
-        !allowedFieldTypes.includes(fieldType)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid asset field type",
-          allowedFieldTypes,
-        });
-      }
-
-      if (status && !allowedStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid status",
-          allowedStatuses,
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const conditions = [
-        `ad_group.id = ${adGroupId}`,
-      ];
-
-      if (type) {
-        conditions.push(`asset.type = '${type}'`);
-      }
-
-      if (fieldType) {
-        conditions.push(
-          `ad_group_asset.field_type = '${fieldType}'`
-        );
-      }
-
-      if (status && status !== "ALL") {
-        conditions.push(
-          `ad_group_asset.status = '${status}'`
-        );
-      } else if (!status) {
-        conditions.push(
-          "ad_group_asset.status != 'REMOVED'"
-        );
-      }
-
-      const query = `
-        SELECT
-          ad_group.id,
-          ad_group.name,
-          ad_group_asset.resource_name,
-          ad_group_asset.asset,
-          ad_group_asset.field_type,
-          ad_group_asset.status,
-          ad_group_asset.primary_status,
-          asset.id,
-          asset.name,
-          asset.type
-        FROM ad_group_asset
-        WHERE ${conditions.join("\n          AND ")}
-      `;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
-        accessToken,
-        developerToken,
-        { query }
-      );
-
-      const results = response?.data?.results ?? [];
-
-      const assets = results.map((row: any) => ({
-        adGroup: row.adGroup,
-        asset: row.asset,
-        association: {
-          resourceName: row.adGroupAsset.resourceName,
-          fieldType: row.adGroupAsset.fieldType,
-          status: row.adGroupAsset.status,
-          primaryStatus: row.adGroupAsset.primaryStatus,
-        },
-      }));
-
-      return res.status(200).json({
-        success: true,
-        adGroupId,
-        total: assets.length,
-        filters: {
-          type: type ?? null,
-          fieldType: fieldType ?? null,
-          status: status ?? "ACTIVE",
-        },
-        assets,
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-router.post(
-  "/ad-groups/:adGroupId/assets",
-  async (req, res) => {
-    try {
-      const { adGroupId } = req.params;
-      const {
-        assetId,
-        fieldType,
-        status = "PAUSED",
-        validateOnly,
-        confirm,
-      } = req.body;
-
-      if (
-        !/^\d+$/.test(adGroupId) ||
-        !/^\d+$/.test(String(assetId ?? ""))
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Valid adGroupId and assetId are required",
-        });
-      }
-
-      const allowedFieldTypes = [
-        "SITELINK",
-        "CALLOUT",
-        "STRUCTURED_SNIPPET",
-        "CALL",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-        "MOBILE_APP",
-        "PRICE",
-        "PROMOTION",
-        "LEAD_FORM",
-        "AD_IMAGE"
-      ];
-
-      if (!allowedFieldTypes.includes(fieldType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Unsupported fieldType",
-          allowedFieldTypes,
-        });
-      }
-
-      if (!["ENABLED", "PAUSED"].includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: "Status must be ENABLED or PAUSED",
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true for live association",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const rawResponse: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/adGroupAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              create: {
-                adGroup: `customers/${customerId}/adGroups/${adGroupId}`,
-                asset: `customers/${customerId}/assets/${assetId}`,
-                fieldType,
-                status,
-              },
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      // Unwrap the response returned by your shared helper.
-      const googleData =
-        rawResponse?.data?.data ??
-        rawResponse?.data ??
-        rawResponse;
-
-      const apiError = googleData?.error ?? rawResponse?.error;
-
-      if (apiError) {
-        const failure = apiError.details?.find(
-          (detail: any) =>
-            detail["@type"]?.includes("GoogleAdsFailure")
-        );
-
-        const firstError = failure?.errors?.[0];
-
-        const statusCode =
-          Number(apiError.code) >= 400 &&
-            Number(apiError.code) <= 599
-            ? Number(apiError.code)
-            : 502;
-
-        return res.status(statusCode).json({
-          success: false,
-          message:
-            firstError?.message ??
-            apiError.message ??
-            "Google Ads API request failed",
-          errorCode: firstError?.errorCode ?? null,
-          requestId: failure?.requestId ?? null,
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Ad group asset association validated"
-          : "Ad group asset association created",
-        results: googleData?.results ?? [],
-      });
-
-
-      // const data =
-      //   response?.data?.data ??
-      //   response?.data ??
-      //   response;
-
-
-      // return res.status(200).json({
-      //   success: true,
-      //   validateOnly: isValidateOnly,
-      //   message: isValidateOnly
-      //     ? "Ad group asset association validated"
-      //     : "Ad group asset association created",
-      //   results: response,
-      // });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-router.patch(
-  "/ad-groups/:adGroupId/assets/:assetId/:fieldType",
-  async (req, res) => {
-    try {
-      const { adGroupId, assetId, fieldType } = req.params;
-      const { status, validateOnly, confirm } = req.body;
-
-      if (
-        !/^\d+$/.test(adGroupId) ||
-        !/^\d+$/.test(assetId)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid adGroupId or assetId",
-        });
-      }
-
-      const allowedFieldTypes = [
-        "SITELINK",
-        "CALLOUT",
-        "STRUCTURED_SNIPPET",
-        "CALL",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-        "MOBILE_APP",
-        "PRICE",
-        "PROMOTION",
-        "LEAD_FORM",
-      ];
-
-      if (!allowedFieldTypes.includes(fieldType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Unsupported fieldType",
-          allowedFieldTypes,
-        });
-      }
-
-      if (!["ENABLED", "PAUSED"].includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: "Status must be ENABLED or PAUSED",
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true for live updates",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const resourceName =
-        `customers/${customerId}/adGroupAssets/` +
-        `${adGroupId}~${assetId}~${fieldType}`;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/adGroupAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              update: {
-                resourceName,
-                status,
-              },
-              updateMask: "status",
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      const data =
-        response?.data?.data ??
-        response?.data ??
-        response;
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Ad group asset status update validated"
-          : "Ad group asset status updated",
-        results: data?.results ?? [],
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-router.delete(
-  "/ad-groups/:adGroupId/assets/:assetId/:fieldType",
-  async (req, res) => {
-    try {
-      const { adGroupId, assetId, fieldType } = req.params;
-      const { validateOnly, confirm } = req.body ?? {};
-
-      if (
-        !/^\d+$/.test(adGroupId) ||
-        !/^\d+$/.test(assetId)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid adGroupId or assetId",
-        });
-      }
-
-      const allowedFieldTypes = [
-        "SITELINK",
-        "CALLOUT",
-        "STRUCTURED_SNIPPET",
-        "CALL",
-        "BUSINESS_NAME",
-        "BUSINESS_LOGO",
-        "MOBILE_APP",
-        "PRICE",
-        "PROMOTION",
-        "LEAD_FORM",
-      ];
-
-      if (!allowedFieldTypes.includes(fieldType)) {
-        return res.status(400).json({
-          success: false,
-          message: "Unsupported fieldType",
-          allowedFieldTypes,
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true to remove the association",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const resourceName =
-        `customers/${customerId}/adGroupAssets/` +
-        `${adGroupId}~${assetId}~${fieldType}`;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/adGroupAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              remove: resourceName,
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      const data =
-        response?.data?.data ??
-        response?.data ??
-        response;
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Ad group asset removal validated"
-          : "Asset association removed from ad group",
-        results: data?.results ?? [],
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: getErrorMessage(error),
-      });
-    }
-  }
-);
-
-router.get("/account/assets", async (req, res) => {
+router.get("/assets", async (req, res) => {
   try {
-    const readFilter = (key: string): string | undefined => {
-      const value = req.query[key];
-
-      if (value === undefined) return undefined;
-
-      if (typeof value !== "string" || !value.trim()) {
-        throw new Error(`${key} must be a single non-empty value`);
-      }
-
-      return value.trim().toUpperCase();
-    };
-
-    const type = readFilter("type");
-    const fieldType = readFilter("fieldType");
-    const status = readFilter("status");
-
-    const allowedStatuses = [
-      "ENABLED",
-      "PAUSED",
-      "REMOVED",
-      "ALL",
-    ];
-
-    if (status && !allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status",
-        allowedStatuses,
-      });
-    }
-
-    // Restrict filter values to safe enum-style identifiers.
-    for (const [key, value] of Object.entries({
-      type,
-      fieldType,
-    })) {
-      if (
-        value &&
-        !/^[A-Z][A-Z0-9_]*$/.test(value)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid ${key} filter`,
-        });
-      }
-    }
-
     const accessToken = await getAccessToken();
     const config = getGoogleAdsConfig(res);
 
@@ -1388,74 +156,68 @@ router.get("/account/assets", async (req, res) => {
 
     const { customerId, developerToken } = config;
 
-    const conditions: string[] = [];
+    const type = req.query.type?.toString().toUpperCase();
+
+    const allowedTypes = [
+      "TEXT",
+      "SITELINK",
+      "CALLOUT",
+      "STRUCTURED_SNIPPET",
+      "CALL",
+      "IMAGE",
+      "YOUTUBE_VIDEO"
+
+    ];
+
+    if (type && !allowedTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid asset type",
+        allowedTypes,
+      });
+    }
+
+    let query = `
+  SELECT
+    asset.id,
+    asset.name,
+    asset.resource_name,
+    asset.type,
+    asset.text_asset.text,
+    asset.sitelink_asset.link_text,
+    asset.sitelink_asset.description1,
+    asset.sitelink_asset.description2,
+    asset.callout_asset.callout_text,
+    asset.structured_snippet_asset.header,
+    asset.structured_snippet_asset.values,
+    asset.call_asset.phone_number,
+    asset.image_asset.file_size,
+    asset.image_asset.mime_type,
+    asset.image_asset.full_size.width_pixels,
+    asset.image_asset.full_size.height_pixels
+    FROM asset
+`;
 
     if (type) {
-      conditions.push(`asset.type = '${type}'`);
+      query += ` WHERE asset.type = '${type}'`;
     }
 
-    if (fieldType) {
-      conditions.push(
-        `customer_asset.field_type = '${fieldType}'`
-      );
-    }
-
-    // if (status && status !== "ALL") {
-    //   conditions.push(
-    //     `customer_asset.status = '${status}'`
-    //   );
-    // } else if (!status) {
-    //   conditions.push(
-    //     "customer_asset.status != 'REMOVED'"
-    //   );
-    // }
-
-    const query = `
-      SELECT
-        customer_asset.resource_name,
-        customer_asset.asset,
-        customer_asset.field_type,
-        customer_asset.status,
-        customer_asset.primary_status,
-        asset.id,
-        asset.name,
-        asset.type
-      FROM customer_asset
-      ${conditions.length
-        ? `WHERE ${conditions.join("\n AND ")}`
-        : ""}
-    `;
-
-    const response: any = await googleAdsRequest(
+    const responseData: any = await googleAdsRequest(
       `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
       accessToken,
       developerToken,
-      { query }
-    );
-    console.log(
-
+      { query },
     );
 
-    const results = response?.data?.results ?? [];
 
-    const assets = results.map((row: any) => ({
-      asset: row.asset,
-      association: {
-        resourceName: row.customerAsset.resourceName,
-        fieldType: row.customerAsset.fieldType,
-        status: row.customerAsset.status,
-        primaryStatus: row.customerAsset.primaryStatus,
-      },
-    }));
+    // Your helper wraps Google's response under "data".
+    const rows = responseData?.data?.results ?? [];
+
+    const assets = rows.map((row: any) => row.asset).filter(Boolean);
 
     return res.status(200).json({
       success: true,
       total: assets.length,
-      filters: {
-        type: type ?? null,
-        fieldType: fieldType ?? null,
-        status: status ?? "ACTIVE",
-      },
       assets,
     });
   } catch (error) {
@@ -1465,170 +227,149 @@ router.get("/account/assets", async (req, res) => {
     });
   }
 });
-
-
-router.post("/account/assets", async (req, res) => {
+router.get("/assets/:assetId", async (req, res) => {
   try {
-    const {
-      assetId,
-      fieldType,
-      status = "PAUSED",
-      validateOnly,
-      confirm,
-    } = req.body;
-
-    if (!/^\d+$/.test(String(assetId ?? ""))) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid assetId is required",
-      });
-    }
-
-    const allowedFieldTypes = [
-      "SITELINK",
-      "CALLOUT",
-      "STRUCTURED_SNIPPET",
-      "CALL",
-      "BUSINESS_NAME",
-      "BUSINESS_LOGO",
-    ];
-
-    if (!allowedFieldTypes.includes(fieldType)) {
-      return res.status(400).json({
-        success: false,
-        message: "Unsupported fieldType",
-        allowedFieldTypes,
-      });
-    }
-
-    if (!["ENABLED", "PAUSED"].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Status must be ENABLED or PAUSED",
-      });
-    }
-
-    const isValidateOnly = validateOnly !== false;
-
-    if (!isValidateOnly && confirm !== true) {
-      return res.status(400).json({
-        success: false,
-        message: "Set confirm: true for live association",
-      });
-    }
-
-    const accessToken = await getAccessToken();
-    const config = getGoogleAdsConfig(res);
-    if (!config) return;
-
-    const { customerId, developerToken } = config;
-
-    const response: any = await googleAdsRequest(
-      `${GOOGLE_ADS_BASE_URL}/${customerId}/customerAssets:mutate`,
-      accessToken,
-      developerToken,
-      {
-        operations: [
-          {
-            create: {
-              customer: `customers/${customerId}`,
-              asset: `customers/${customerId}/assets/${assetId}`,
-              fieldType,
-              status,
-            },
-          },
-        ],
-        validateOnly: isValidateOnly,
-      }
-    );
-
-    const data =
-      response?.data?.data ??
-      response?.data ??
-      response;
-
-    return res.status(200).json({
-      success: true,
-      validateOnly: isValidateOnly,
-      message: isValidateOnly
-        ? "Account asset association validated"
-        : "Account asset association created",
-      results: data?.results ?? [],
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: getErrorMessage(error),
-    });
-  }
-});
-
-router.patch("/account/assets/:assetId/:fieldType", async (req, res) => {
-  try {
-    const { assetId, fieldType } = req.params;
-    const { status, validateOnly, confirm } = req.body;
+    const { assetId } = req.params;
 
     if (!/^\d+$/.test(assetId)) {
       return res.status(400).json({
         success: false,
-        message: "Valid assetId is required",
-      });
-    }
-
-    if (!["ENABLED", "PAUSED"].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Status must be ENABLED or PAUSED",
-      });
-    }
-
-    const isValidateOnly = validateOnly !== false;
-
-    if (!isValidateOnly && confirm !== true) {
-      return res.status(400).json({
-        success: false,
-        message: "Set confirm: true for live update",
+        message: "Invalid asset ID",
       });
     }
 
     const accessToken = await getAccessToken();
     const config = getGoogleAdsConfig(res);
+
     if (!config) return;
 
     const { customerId, developerToken } = config;
 
-    const response: any = await googleAdsRequest(
-      `${GOOGLE_ADS_BASE_URL}/${customerId}/customerAssets:mutate`,
+    // 1. Retrieve the asset itself
+    const assetQuery = `
+      SELECT
+        asset.id,
+        asset.name,
+        asset.resource_name,
+        asset.type
+      FROM asset
+      WHERE asset.id = ${assetId}
+    `;
+
+    const assetResponse: any = await googleAdsRequest(
+      `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
       accessToken,
       developerToken,
-      {
-        operations: [
-          {
-            update: {
-              resourceName:
-                `customers/${customerId}/customerAssets/` +
-                `${assetId}~${fieldType}`,
-              status,
-            },
-            updateMask: "status",
-          },
-        ],
-        validateOnly: isValidateOnly,
-      }
+      { query: assetQuery }
     );
 
-    const data =
-      response?.data?.data ??
-      response?.data ??
-      response;
+    const assetResults = assetResponse?.data?.results ?? [];
+    const asset = assetResults[0]?.asset;
+
+    if (!asset) {
+      return res.status(404).json({
+        success: false,
+        message: "Asset not found",
+      });
+    }
+
+    const assetResourceName =
+      asset.resourceName ??
+      `customers/${customerId}/assets/${assetId}`;
+
+    // 2. Retrieve ad group associations and their statuses
+    const adGroupQuery = `
+      SELECT
+        ad_group.id,
+        ad_group.name,
+        ad_group_asset.asset,
+        ad_group_asset.field_type,
+        ad_group_asset.status,
+        ad_group_asset.primary_status
+      FROM ad_group_asset
+      WHERE ad_group_asset.asset = '${assetResourceName}'
+    `;
+
+    // 3. Retrieve campaign associations and their statuses
+    const campaignQuery = `
+      SELECT
+        campaign.id,
+        campaign.name,
+        campaign_asset.asset,
+        campaign_asset.field_type,
+        campaign_asset.status,
+        campaign_asset.primary_status
+      FROM campaign_asset
+      WHERE campaign_asset.asset = '${assetResourceName}'
+    `;
+
+    const assetGroupQuery = `
+  SELECT
+    asset_group.id,
+    asset_group.name,
+    asset_group_asset.asset,
+    asset_group_asset.field_type,
+    asset_group_asset.status,
+    asset_group_asset.primary_status
+  FROM asset_group_asset
+  WHERE asset_group_asset.asset = '${assetResourceName}'
+`;
+
+    const [
+      adGroupResponse,
+      campaignResponse,
+      assetGroupResponse,
+    ]: any = await Promise.all([
+      googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
+        accessToken,
+        developerToken,
+        { query: adGroupQuery }
+      ),
+      googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
+        accessToken,
+        developerToken,
+        { query: campaignQuery }
+      ),
+      googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
+        accessToken,
+        developerToken,
+        { query: assetGroupQuery }
+      ),
+    ]);
+    const adGroupResults =
+      adGroupResponse?.data?.results ?? [];
+
+    const campaignResults =
+      campaignResponse?.data?.results ?? [];
+    const assetGroupResults =
+      assetGroupResponse?.data?.results ?? [];
 
     return res.status(200).json({
       success: true,
-      validateOnly: isValidateOnly,
-      message: isValidateOnly
-        ? "Account asset status update validated"
-        : "Account asset status updated",
-      results: data?.results ?? [],
+      asset,
+      associations: {
+        adGroups: adGroupResults.map((row: any) => ({
+          adGroup: row.adGroup,
+          fieldType: row.adGroupAsset.fieldType,
+          status: row.adGroupAsset.status,
+          primaryStatus: row.adGroupAsset.primaryStatus,
+        })),
+        campaigns: campaignResults.map((row: any) => ({
+          campaign: row.campaign,
+          fieldType: row.campaignAsset.fieldType,
+          status: row.campaignAsset.status,
+          primaryStatus: row.campaignAsset.primaryStatus,
+        })),
+        assetGroups: assetGroupResults.map((row: any) => ({
+          assetGroup: row.assetGroup,
+          fieldType: row.assetGroupAsset.fieldType,
+          status: row.assetGroupAsset.status,
+          primaryStatus: row.assetGroupAsset.primaryStatus,
+        })),
+      },
     });
   } catch (error) {
     return res.status(500).json({
@@ -1637,90 +378,18 @@ router.patch("/account/assets/:assetId/:fieldType", async (req, res) => {
     });
   }
 });
-router.delete(
-  "/account/assets/:assetId/:fieldType",
-  async (req, res) => {
-    try {
-      const { assetId, fieldType } = req.params;
-      const { validateOnly, confirm } = req.body ?? {};
 
-      if (!/^\d+$/.test(assetId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Valid assetId is required",
-        });
-      }
-
-      const isValidateOnly = validateOnly !== false;
-
-      if (!isValidateOnly && confirm !== true) {
-        return res.status(400).json({
-          success: false,
-          message: "Set confirm: true for live deletion",
-        });
-      }
-
-      const accessToken = await getAccessToken();
-      const config = getGoogleAdsConfig(res);
-      if (!config) return;
-
-      const { customerId, developerToken } = config;
-
-      const response: any = await googleAdsRequest(
-        `${GOOGLE_ADS_BASE_URL}/${customerId}/customerAssets:mutate`,
-        accessToken,
-        developerToken,
-        {
-          operations: [
-            {
-              remove:
-                `customers/${customerId}/customerAssets/` +
-                `${assetId}~${fieldType}`,
-            },
-          ],
-          validateOnly: isValidateOnly,
-        }
-      );
-
-      const data =
-        response?.data?.data ??
-        response?.data ??
-        response;
-
-      return res.status(200).json({
-        success: true,
-        validateOnly: isValidateOnly,
-        message: isValidateOnly
-          ? "Account asset association removal validated"
-          : "Account asset association removed",
-        results: data?.results ?? [],
-      });
-    } catch (error) {
-      return res.status(500).json({
+router.post("/images/upload", (req, res, next) => {
+  imageUpload.single("image")(req, res, (error) => {
+    if (error) {
+      return res.status(400).json({
         success: false,
-        message: getErrorMessage(error),
+        message: error.message,
       });
     }
-  }
-);
-
-router.post(
-  "/assets/images/upload",
-
-  // Handle multipart file upload errors
-  (req, res, next) => {
-    imageUpload.single("image")(req, res, (error) => {
-
-      if (error) {
-        return res.status(400).json({
-          success: false,
-          message: error.message,
-        });
-      }
-
-      next();
-    });
-  },
+    next();
+  });
+},
 
   async (req, res) => {
     try {
@@ -1842,6 +511,861 @@ router.post(
           ? "Image asset validation passed; asset not created"
           : "Image asset created successfully",
         results: data?.results ?? [],
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: getErrorMessage(error),
+      });
+    }
+  }
+);
+
+router.post("/videos/upload", videoUpload.single("video"), async (req: Request, res: Response) => {
+  let tempFilePath: string | undefined;
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Select a video using the "video" form-data field',
+      });
+    }
+
+    tempFilePath = req.file.path;
+
+    const videoTitle =
+      String(req.body.videoTitle || "").trim() ||
+      path.parse(req.file.originalname).name;
+
+    const videoDescription =
+      String(req.body.videoDescription || "").trim();
+
+    if (videoTitle.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Video title must not exceed 100 characters",
+      });
+    }
+
+    if (videoDescription.length > 5000) {
+      return res.status(400).json({
+        success: false,
+        message: "Video description must not exceed 5000 characters",
+      });
+    }
+
+    const accessToken = await getAccessToken();
+    const config = getGoogleAdsConfig(res);
+
+    if (!config) return;
+
+    const customerId = String(config.customerId).replace(/-/g, "");
+    const { developerToken } = config;
+
+    const fileSize = req.file.size;
+
+    // 1. Initiate the resumable upload session.
+    const startUrl =
+      `https://googleads.googleapis.com/resumable/upload/v25/` +
+      `customers/${customerId}/youTubeVideoUploads:create`;
+
+    const startResponse = await fetch(startUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "developer-token": developerToken,
+        "Content-Type": "application/json",
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(fileSize),
+      },
+      body: JSON.stringify({
+        customer_id: customerId,
+        you_tube_video_upload: {
+          video_title: videoTitle,
+          video_description: videoDescription,
+          video_privacy: "UNLISTED",
+        },
+      }),
+    });
+
+    const startText = await startResponse.text();
+
+    if (!startResponse.ok) {
+      return res.status(502).json({
+        success: false,
+        step: "initiate_upload",
+        message: "Google Ads could not initiate the video upload",
+        details: parseGoogleResponse(startText),
+      });
+    }
+
+    const uploadUrl =
+      startResponse.headers.get("x-goog-upload-url");
+
+    if (!uploadUrl) {
+      return res.status(502).json({
+        success: false,
+        message: "Google Ads did not return an upload URL",
+      });
+    }
+
+    // The upload URL comes from Google. Require HTTPS.
+    if (new URL(uploadUrl).protocol !== "https:") {
+      return res.status(502).json({
+        success: false,
+        message: "Google returned an invalid upload URL",
+      });
+    }
+
+    // 2. Stream the local video file and finalize the upload.
+    const videoStream = createReadStream(tempFilePath);
+
+    const uploadResponse = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(fileSize),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+      },
+      body: videoStream as any,
+      duplex: "half",
+    } as RequestInit);
+
+    const uploadText = await uploadResponse.text();
+
+    if (!uploadResponse.ok) {
+      return res.status(502).json({
+        success: false,
+        step: "upload_video",
+        message: "Google Ads video upload failed",
+        details: parseGoogleResponse(uploadText),
+      });
+    }
+
+    const result = parseGoogleResponse(uploadText) as {
+      resourceName?: string;
+    };
+
+    if (
+      !result ||
+      typeof result !== "object" ||
+      !result.resourceName
+    ) {
+      return res.status(502).json({
+        success: false,
+        message: "Upload completed without a resource name",
+        details: result,
+      });
+    }
+
+    // 3. Return the upload resource for status checking.
+    return res.status(201).json({
+      success: true,
+      message: "Video uploaded; processing may still be in progress",
+      uploadResourceName: result.resourceName,
+      videoTitle,
+      fileSize,
+      nextStep: "Check YouTube video upload state using GAQL",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: getErrorMessage(error),
+    });
+  } finally {
+    if (tempFilePath) {
+      await unlink(tempFilePath).catch(() => undefined);
+    }
+  }
+}
+);
+
+router.get(
+  "/videos/upload-status/:uploadId",
+  async (req, res) => {
+    try {
+      const { uploadId } = req.params;
+      const createAsset = req.query.createAsset === "true";
+
+      if (!/^\d+$/.test(uploadId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid upload ID",
+        });
+      }
+
+      const accessToken = await getAccessToken();
+      const config = getGoogleAdsConfig(res);
+
+      if (!config) return;
+
+      const customerId = String(config.customerId).replace(/-/g, "");
+      const { developerToken } = config;
+
+      const resourceName =
+        `customers/${customerId}/youTubeVideoUploads/${uploadId}`;
+
+      const query = `
+        SELECT
+          you_tube_video_upload.resource_name,
+          you_tube_video_upload.video_id,
+          you_tube_video_upload.state
+        FROM you_tube_video_upload
+        WHERE you_tube_video_upload.resource_name = '${resourceName}'
+      `;
+
+      const rawResponse: any = await googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
+        accessToken,
+        developerToken,
+        { query }
+      );
+
+      const googleData =
+        rawResponse?.data?.data ??
+        rawResponse?.data ??
+        rawResponse;
+
+      if (googleData?.error) {
+        return res.status(502).json({
+          success: false,
+          message: googleData.error.message,
+          details: googleData.error.details ?? [],
+        });
+      }
+
+      const result = googleData?.results?.[0];
+      const videoUpload = result?.youTubeVideoUpload;
+
+      if (!videoUpload) {
+        return res.status(404).json({
+          success: false,
+          message: "Video upload resource was not found",
+          resourceName,
+        });
+      }
+
+      const state = videoUpload.state;
+      const videoId = videoUpload.videoId || null;
+
+      if (state !== "PROCESSED") {
+        return res.status(200).json({
+          success: true,
+          resourceName: videoUpload.resourceName,
+          videoId,
+          state,
+          readyToCreateAsset: false,
+          message: "Google Ads video upload is not processed yet",
+        });
+      }
+
+      // Status-only request: do not create an asset.
+      if (!createAsset) {
+        return res.status(200).json({
+          success: true,
+          resourceName: videoUpload.resourceName,
+          videoId,
+          state,
+          readyToCreateAsset: true,
+          message: "Video is processed and ready for asset creation",
+        });
+      }
+
+      if (!videoId) {
+        return res.status(422).json({
+          success: false,
+          message: "Processed upload has no video ID",
+        });
+      }
+
+      // IMPORTANT:
+      // Use the actual YouTube title, not the upload resource ID.
+      const videoTitle = String(req.query.videoTitle ?? "").trim();
+
+      if (!videoTitle) {
+        return res.status(400).json({
+          success: false,
+          message: "Provide videoTitle when createAsset=true",
+        });
+      }
+
+      const asset = await createGoogleAdsVideoAsset({
+        customerId,
+        accessToken,
+        developerToken,
+        videoId,
+        videoTitle,
+        assetName: videoTitle,
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "Video processed and Google Ads asset created",
+        resourceName: videoUpload.resourceName,
+        state,
+        videoId,
+        readyToCreateAsset: true,
+        asset,
+      });
+    } catch (error) {
+      console.error("Video upload status check failed:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: getErrorMessage(error),
+      });
+    }
+  }
+);
+router.post(
+  "/youtube/videos/upload",
+  videoUpload.single("video"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Please select a video file",
+        });
+      }
+
+      const title =
+        String(req.body.videoTitle || "").trim() ||
+        req.file.originalname;
+
+      const description =
+        String(req.body.videoDescription || "").trim();
+
+      const response = await youtube.videos.insert({
+        part: ["snippet", "status"],
+
+        requestBody: {
+          snippet: {
+            title,
+            description,
+          },
+
+          status: {
+            privacyStatus: "public",
+          },
+        },
+
+        media: {
+          body: createReadStream(req.file.path),
+        },
+      });
+
+      const videoId = response.data.id;
+
+      if (!videoId) {
+        return res.status(502).json({
+          success: false,
+          message: "YouTube did not return a video ID",
+        });
+      }
+
+      // Step 1: Check video processing status.
+      const statusResponse = await youtube.videos.list({
+        part: ["status", "processingDetails"],
+        id: videoId,
+      });
+
+      const uploadedVideo = statusResponse.data.items?.[0];
+
+      const processingStatus =
+        uploadedVideo?.processingDetails?.processingStatus;
+
+      // Step 2: Handle failed processing.
+      if (
+        processingStatus === "failed" ||
+        processingStatus === "terminated"
+      ) {
+        return res.status(502).json({
+          success: false,
+          videoUploaded: true,
+          googleAdsAssetCreated: false,
+          videoId,
+          processingStatus,
+          message: "YouTube video processing failed",
+        });
+      }
+
+      // Step 3: Do NOT create the asset until processing succeeds.
+      if (processingStatus !== "succeeded") {
+        return res.status(202).json({
+          success: true,
+          videoUploaded: true,
+          googleAdsAssetCreated: false,
+          message:
+            "Video uploaded. Wait until YouTube processing completes.",
+          video: {
+            videoId,
+            videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          },
+          processingStatus: processingStatus ?? "unknown",
+        });
+      }
+
+      // Step 4: Processing succeeded. Create the Google Ads asset.
+      const accessToken = await getAccessToken();
+      const config = getGoogleAdsConfig(res);
+
+      if (!config) return;
+
+      const asset = await createGoogleAdsVideoAsset({
+        customerId: String(config.customerId).replace(/-/g, ""),
+        accessToken,
+        developerToken: config.developerToken,
+        videoId,
+        videoTitle: title,
+        assetName: title,
+      });
+
+      // Step 5: Return both results.
+      return res.status(201).json({
+        success: true,
+        message: "YouTube video uploaded and Google Ads asset created",
+        videoUploaded: true,
+        googleAdsAssetCreated: true,
+        video: {
+          videoId,
+          videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          privacyStatus: response.data.status?.privacyStatus,
+          processingStatus,
+        },
+        asset,
+      });
+    } catch (error) {
+      console.error("YouTube upload failed:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "YouTube video upload failed",
+      });
+    }
+  }
+);
+router.post("/assets/associations/campaign", (req, res) =>
+  createAssetAssociation(req, res, "campaign")
+);
+
+router.post("/assets/associations/ad-group", (req, res) =>
+  createAssetAssociation(req, res, "adGroup")
+);
+
+router.post("/assets/associations/asset-group", (req, res) =>
+  createAssetAssociation(req, res, "assetGroup")
+);
+
+function parseGoogleResponse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+
+const ASSOCIATION_LIST_QUERIES = {
+  campaign: (id: string) => `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign_asset.resource_name,
+      campaign_asset.asset,
+      campaign_asset.field_type,
+      campaign_asset.status,
+      campaign_asset.primary_status,
+      asset.id,
+      asset.name,
+      asset.type
+    FROM campaign_asset
+    WHERE campaign.id = ${id}
+  `,
+
+  adGroup: (id: string) => `
+    SELECT
+      ad_group.id,
+      ad_group.name,
+      ad_group_asset.resource_name,
+      ad_group_asset.asset,
+      ad_group_asset.field_type,
+      ad_group_asset.status,
+      ad_group_asset.primary_status,
+      asset.id,
+      asset.name,
+      asset.type
+    FROM ad_group_asset
+    WHERE ad_group.id = ${id}
+  `,
+
+  assetGroup: (id: string) => `
+    SELECT
+      asset_group.id,
+      asset_group.name,
+      asset_group_asset.resource_name,
+      asset_group_asset.asset,
+      asset_group_asset.field_type,
+      asset_group_asset.status,
+      asset_group_asset.primary_status,
+      asset.id,
+      asset.name,
+      asset.type
+    FROM asset_group_asset
+    WHERE asset_group.id = ${id}
+  `,
+};
+
+router.get(
+  "/assets/associations/:level/:targetId",
+  async (req, res) => {
+    try {
+      const level = req.params.level as
+        | "campaign"
+        | "adGroup"
+        | "assetGroup";
+
+      const { targetId } = req.params;
+
+      if (!/^\d+$/.test(targetId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid target ID",
+        });
+      }
+
+      if (!(level in ASSOCIATION_LIST_QUERIES)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid association level",
+          allowedLevels: [
+            "campaign",
+            "adGroup",
+            "assetGroup",
+          ],
+        });
+      }
+
+      const accessToken = await getAccessToken();
+      const config = getGoogleAdsConfig(res);
+
+      if (!config) return;
+
+      const customerId = String(config.customerId).replace(
+        /-/g,
+        ""
+      );
+
+      const query = ASSOCIATION_LIST_QUERIES[level](targetId);
+
+      const raw: any = await googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/googleAds:search`,
+        accessToken,
+        config.developerToken,
+        { query }
+      );
+
+      const rows =
+        raw?.data?.results ??
+        raw?.data?.data?.results ??
+        raw?.results ??
+        [];
+
+      const relationKey = {
+        campaign: "campaignAsset",
+        adGroup: "adGroupAsset",
+        assetGroup: "assetGroupAsset",
+      }[level];
+
+      return res.status(200).json({
+        success: true,
+        level,
+        targetId,
+        total: rows.length,
+        associations: rows.map((row: any) => {
+          const relation = row[relationKey];
+
+          return {
+            resourceName: relation?.resourceName,
+            target:
+              row.campaign ??
+              row.adGroup ??
+              row.assetGroup,
+            asset: row.asset,
+            fieldType: relation?.fieldType,
+            status: relation?.status,
+            primaryStatus: relation?.primaryStatus,
+          };
+        }),
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: getErrorMessage(error),
+      });
+    }
+  }
+);
+
+const ASSOCIATION_SERVICES = {
+  campaign: {
+    service: "campaignAssets",
+    resource: "campaignAssets",
+    idKey: "campaignId",
+  },
+  adGroup: {
+    service: "adGroupAssets",
+    resource: "adGroupAssets",
+    idKey: "adGroupId",
+  },
+  assetGroup: {
+    service: "assetGroupAssets",
+    resource: "assetGroupAssets",
+    idKey: "assetGroupId",
+  },
+} as const;
+
+
+
+router.patch(
+  "/assets/associations/status",
+  async (req, res) => {
+    try {
+      const {
+        level,
+        targetId,
+        assetId,
+        fieldType,
+        status,
+      } = req.body;
+
+      if (
+        !["campaign", "adGroup", "assetGroup"].includes(level)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid association level",
+        });
+      }
+
+      if (
+        !/^\d+$/.test(String(targetId ?? "")) ||
+        !/^\d+$/.test(String(assetId ?? ""))
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid targetId and assetId are required",
+        });
+      }
+
+      if (!["ENABLED", "PAUSED"].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "status must be ENABLED or PAUSED",
+        });
+      }
+
+      const validateOnly =
+        String(req.body.validateOnly ?? "true").toLowerCase()
+        !== "false";
+
+      const confirm =
+        req.body.confirm === true ||
+        String(req.body.confirm ?? "").toLowerCase() === "true";
+
+      if (!validateOnly && !confirm) {
+        return res.status(400).json({
+          success: false,
+          message: "Set confirm: true for live updates",
+        });
+      }
+
+      const associationConfig =
+        ASSOCIATION_SERVICES[
+        level as keyof typeof ASSOCIATION_SERVICES
+        ];
+
+      const accessToken = await getAccessToken();
+      const config = getGoogleAdsConfig(res);
+
+      if (!config) return;
+
+      const customerId = String(config.customerId).replace(
+        /-/g,
+        ""
+      );
+
+      const resourceName =
+        `customers/${customerId}/` +
+        `${associationConfig.resource}/` +
+        `${targetId}~${assetId}~${fieldType}`;
+
+      const raw: any = await googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/` +
+        `${associationConfig.service}:mutate`,
+        accessToken,
+        config.developerToken,
+        {
+          operations: [
+            {
+              update: {
+                resourceName,
+                status,
+              },
+              updateMask: "status",
+            },
+          ],
+          validateOnly,
+        }
+      );
+
+      // Do not treat a nested Google Ads API error as success.
+      const googleError =
+        raw?.data?.data?.error ??
+        raw?.data?.error ??
+        raw?.error ??
+        raw?.data?.results?.data?.error;
+
+      if (googleError) {
+        return res.status(502).json({
+          success: false,
+          message:
+            googleError.message ??
+            "Google Ads association update failed",
+          details: googleError.details ?? [],
+        });
+      }
+
+      return res.status(validateOnly ? 200 : 200).json({
+        success: true,
+        resourceName,
+        status,
+        validateOnly,
+        message: validateOnly
+          ? "Validation passed; status was not changed"
+          : "Association status updated",
+        googleResponse: raw?.data?.data ?? raw?.data ?? raw,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: getErrorMessage(error),
+      });
+    }
+  }
+);
+
+router.post(
+  "/assets/associations/remove",
+  async (req, res) => {
+    try {
+      const {
+        level,
+        targetId,
+        assetId,
+        fieldType,
+      } = req.body;
+
+      if (
+        !["campaign", "adGroup", "assetGroup"].includes(level)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid association level",
+        });
+      }
+
+      if (
+        !/^\d+$/.test(String(targetId ?? "")) ||
+        !/^\d+$/.test(String(assetId ?? ""))
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid targetId and assetId are required",
+        });
+      }
+
+      if (typeof fieldType !== "string" || !fieldType.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "fieldType is required",
+        });
+      }
+
+      const validateOnly =
+        String(req.body.validateOnly ?? "true").toLowerCase()
+        !== "false";
+
+      const confirm =
+        req.body.confirm === true ||
+        String(req.body.confirm ?? "").toLowerCase() === "true";
+
+      if (!validateOnly && !confirm) {
+        return res.status(400).json({
+          success: false,
+          message: "Set confirm: true for live removal",
+        });
+      }
+
+      const associationConfig =
+        ASSOCIATION_SERVICES[
+        level as keyof typeof ASSOCIATION_SERVICES
+        ];
+
+      const accessToken = await getAccessToken();
+      const config = getGoogleAdsConfig(res);
+
+      if (!config) return;
+
+      const customerId = String(config.customerId).replace(
+        /-/g,
+        ""
+      );
+
+      const resourceName =
+        `customers/${customerId}/` +
+        `${associationConfig.resource}/` +
+        `${targetId}~${assetId}~${fieldType}`;
+
+      const raw: any = await googleAdsRequest(
+        `${GOOGLE_ADS_BASE_URL}/${customerId}/` +
+        `${associationConfig.service}:mutate`,
+        accessToken,
+        config.developerToken,
+        {
+          operations: [{ remove: resourceName }],
+          validateOnly,
+        }
+      );
+
+      const googleError =
+        raw?.data?.data?.error ??
+        raw?.data?.error ??
+        raw?.error ??
+        raw?.data?.results?.data?.error;
+
+      if (googleError) {
+        return res.status(502).json({
+          success: false,
+          message:
+            googleError.message ??
+            "Google Ads association removal failed",
+          details: googleError.details ?? [],
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        resourceName,
+        validateOnly,
+        message: validateOnly
+          ? "Validation passed; association was not removed"
+          : "Association removed",
+        googleResponse: raw?.data?.data ?? raw?.data ?? raw,
       });
     } catch (error) {
       return res.status(500).json({
