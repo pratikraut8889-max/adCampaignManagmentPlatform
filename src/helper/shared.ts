@@ -553,10 +553,7 @@ const ALLOWED_FIELD_TYPES_de: Record<AssociationLevel, string[]> = {
         "CALLOUT",
         "STRUCTURED_SNIPPET",
         "CALL",
-
-        // Image extension
-        "AD_IMAGE",
-        "IMAGE"
+        "AD_IMAGE" // ✅ Sirf AD_IMAGE rahega, "IMAGE" ko delete kar dein
     ],
 
     adGroup: [
@@ -564,10 +561,7 @@ const ALLOWED_FIELD_TYPES_de: Record<AssociationLevel, string[]> = {
         "CALLOUT",
         "STRUCTURED_SNIPPET",
         "CALL",
-
-        // Image extension
-        "AD_IMAGE",
-        "IMAGE"
+        "AD_IMAGE" // ✅ Sirf AD_IMAGE rahega, "IMAGE" ko delete kar dein
     ],
 
     assetGroup: [
@@ -575,22 +569,16 @@ const ALLOWED_FIELD_TYPES_de: Record<AssociationLevel, string[]> = {
         "LONG_HEADLINE",
         "DESCRIPTION",
         "LONG_DESCRIPTION",
-
-        // Image assets in Performance Max
         "MARKETING_IMAGE",
         "SQUARE_MARKETING_IMAGE",
         "PORTRAIT_MARKETING_IMAGE",
-
-        // Logo assets
         "LOGO",
         "LANDSCAPE_LOGO",
-
-        // Video asset in Performance Max
         "YOUTUBE_VIDEO",
-
         "BUSINESS_NAME",
     ],
 };
+
 
 export async function createAssetAssociation(
     req: any,

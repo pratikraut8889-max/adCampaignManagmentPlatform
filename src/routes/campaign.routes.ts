@@ -620,103 +620,100 @@ router.post("/google-ads/campaigns/rename", async (req, res) => {
     }
 });
 
-router.post(
-    "/google-ads/campaigns/:campaignId/target-cpa",
-    async (req, res) => {
-        try {
-            const customerId =
-                process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
+router.post("/google-ads/campaigns/:campaignId/target-cpa", async (req, res) => {
+    try {
+        const customerId =
+            process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
 
-            const { campaignId } = req.params;
-            const { targetCpa } = req.body ?? {};
+        const { campaignId } = req.params;
+        const { targetCpa } = req.body ?? {};
 
-            if (!customerId) {
-                return res.status(400).json({
-                    message: "Missing GOOGLE_ADS_CUSTOMER_ID",
-                });
-            }
-
-            if (!/^\d+$/.test(campaignId)) {
-                return res.status(400).json({
-                    message: "Invalid campaignId",
-                });
-            }
-
-            if (
-                typeof targetCpa !== "number" ||
-                !Number.isFinite(targetCpa) ||
-                targetCpa <= 0
-            ) {
-                return res.status(400).json({
-                    message: "targetCpa must be a positive number",
-                });
-            }
-
-            const accessToken = await getAccessToken();
-
-            const targetCpaMicros = String(
-                Math.round(targetCpa * 1_000_000)
-            );
-
-            const resourceName =
-                `customers/${customerId}/campaigns/${campaignId}`;
-
-            // Safety: validation only. No live changes.
-            const validateOnly = req.body.validateOnly ?? true;
-
-            const response = await fetch(
-                `https://googleads.googleapis.com/v25/customers/${customerId}/campaigns:mutate`,
-                {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        operations: [
-                            {
-                                updateMask:
-                                    "maximizeConversions.targetCpaMicros",
-                                update: {
-                                    resourceName,
-                                    maximizeConversions: {
-                                        targetCpaMicros,
-                                    },
-                                },
-                            },
-                        ],
-                        validateOnly,
-                    }),
-                }
-            );
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                return res.status(response.status).json(data);
-            }
-
-            return res.json({
-                message:
-                    "Target CPA request validated. No changes were applied.",
-                validateOnly,
-                campaignId,
-                targetCpa,
-                targetCpaMicros,
-                googleResponse: data,
-            });
-        } catch (error) {
-            console.error("Target CPA error:", error);
-
-            return res.status(500).json({
-                message:
-                    error instanceof Error
-                        ? error.message
-                        : "Failed to validate Target CPA",
+        if (!customerId) {
+            return res.status(400).json({
+                message: "Missing GOOGLE_ADS_CUSTOMER_ID",
             });
         }
+
+        if (!/^\d+$/.test(campaignId)) {
+            return res.status(400).json({
+                message: "Invalid campaignId",
+            });
+        }
+
+        if (
+            typeof targetCpa !== "number" ||
+            !Number.isFinite(targetCpa) ||
+            targetCpa <= 0
+        ) {
+            return res.status(400).json({
+                message: "targetCpa must be a positive number",
+            });
+        }
+
+        const accessToken = await getAccessToken();
+
+        const targetCpaMicros = String(
+            Math.round(targetCpa * 1_000_000)
+        );
+
+        const resourceName =
+            `customers/${customerId}/campaigns/${campaignId}`;
+
+        // Safety: validation only. No live changes.
+        const validateOnly = req.body.validateOnly ?? true;
+
+        const response = await fetch(
+            `https://googleads.googleapis.com/v25/customers/${customerId}/campaigns:mutate`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    operations: [
+                        {
+                            updateMask:
+                                "maximizeConversions.targetCpaMicros",
+                            update: {
+                                resourceName,
+                                maximizeConversions: {
+                                    targetCpaMicros,
+                                },
+                            },
+                        },
+                    ],
+                    validateOnly,
+                }),
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            return res.status(response.status).json(data);
+        }
+
+        return res.json({
+            message:
+                "Target CPA request validated. No changes were applied.",
+            validateOnly,
+            campaignId,
+            targetCpa,
+            targetCpaMicros,
+            googleResponse: data,
+        });
+    } catch (error) {
+        console.error("Target CPA error:", error);
+
+        return res.status(500).json({
+            message:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to validate Target CPA",
+        });
     }
-);
+});
 
 router.get(
     "/google-ads/campaigns/setup-options",
@@ -757,5 +754,109 @@ router.get(
         });
     }
 );
+
+router.get("/google-ads/reports/overview", async (_req, res) => {
+    try {
+        const accessToken = await getAccessToken();
+
+        const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(
+            /-/g,
+            "",
+        );
+
+        const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+
+        if (!customerId || !developerToken) {
+            return res.status(400).json({
+                message:
+                    "GOOGLE_ADS_CUSTOMER_ID or GOOGLE_ADS_DEVELOPER_TOKEN is missing",
+            });
+        }
+
+        const query = `
+            SELECT
+                customer.id,
+                metrics.impressions,
+                metrics.clicks,
+                metrics.ctr,
+                metrics.cost_micros,
+                metrics.average_cpc,
+                metrics.conversions,
+                metrics.conversions_from_interactions_rate,
+                metrics.cost_per_conversion,
+                metrics.conversions_value,
+                metrics.conversions_value_per_cost
+            FROM customer
+            WHERE segments.date DURING LAST_30_DAYS
+        `;
+
+        const response = await fetch(
+            `https://googleads.googleapis.com/v25/customers/${customerId}/googleAds:search`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                    "developer-token": developerToken,
+                },
+                body: JSON.stringify({ query }),
+            },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            return res.status(response.status).json(data);
+        }
+
+        const row = data.results?.[0];
+
+        const metrics = row?.metrics;
+
+        const microsToCurrency = (value: unknown) =>
+            Number(value ?? 0) / 1_000_000;
+
+        return res.json({
+            customerId,
+            dateRange: "LAST_30_DAYS",
+            currencyCode: row?.customer?.currencyCode ?? null,
+
+            kpis: {
+                impressions: Number(metrics?.impressions ?? 0),
+                clicks: Number(metrics?.clicks ?? 0),
+                ctr: Number(metrics?.ctr ?? 0),
+
+                cost: microsToCurrency(metrics?.costMicros),
+                averageCpc: microsToCurrency(metrics?.averageCpc),
+
+                conversions: Number(metrics?.conversions ?? 0),
+                conversionRate: Number(
+                    metrics?.conversionsFromInteractionsRate ?? 0,
+                ),
+
+                costPerConversion: microsToCurrency(
+                    metrics?.costPerConversion,
+                ),
+
+                conversionValue: Number(
+                    metrics?.conversionsValue ?? 0,
+                ),
+
+                roas: Number(
+                    metrics?.conversionsValuePerCost ?? 0,
+                ),
+            },
+        });
+    } catch (error) {
+        console.error("Google Ads reporting error:", error);
+
+        return res.status(500).json({
+            message:
+                error instanceof Error
+                    ? error.message
+                    : "Google Ads reporting failed",
+        });
+    }
+});
 
 export default router
