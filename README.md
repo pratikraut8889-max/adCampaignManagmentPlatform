@@ -148,14 +148,14 @@ google-ads-simple/
 
 ### Purpose of each file
 
-| File | Purpose |
-|---|---|
-| `src/index.ts` | Express server, OAuth flow, token handling, Google Ads API calls |
-| `data/google-token.json` | Local-development token storage |
-| `nodemon.json` | Watches source code while ignoring token-file changes |
-| `.env` | Local secrets/configuration |
-| `.gitignore` | Prevents secrets and dependencies from being committed |
-| `package.json` | Dependencies and scripts |
+| File                     | Purpose                                                          |
+| ------------------------ | ---------------------------------------------------------------- |
+| `src/index.ts`           | Express server, OAuth flow, token handling, Google Ads API calls |
+| `data/google-token.json` | Local-development token storage                                  |
+| `nodemon.json`           | Watches source code while ignoring token-file changes            |
+| `.env`                   | Local secrets/configuration                                      |
+| `.gitignore`             | Prevents secrets and dependencies from being committed           |
+| `package.json`           | Dependencies and scripts                                         |
 
 > In a real SaaS, `google-token.json` must be replaced with encrypted database storage per customer/tenant.
 
@@ -440,10 +440,7 @@ The solution was `nodemon.json`:
 {
   "watch": ["src"],
   "ext": "ts",
-  "ignore": [
-    "data/**",
-    "node_modules/**"
-  ]
+  "ignore": ["data/**", "node_modules/**"]
 }
 ```
 
@@ -469,9 +466,7 @@ The response can contain:
 
 ```json
 {
-  "resourceNames": [
-    "customers/1234567890"
-  ]
+  "resourceNames": ["customers/1234567890"]
 }
 ```
 
@@ -966,37 +961,37 @@ This is safer because the rest of the campaign setup (targeting, ad groups, ads,
 
 ## Core
 
-| Service | Main purpose |
-|---|---|
-| `CustomerService` | Customer/account access and account-level operations |
-| `GoogleAdsService` | GAQL queries, reporting, search/search stream |
-| `CampaignService` | Create/update/remove campaigns |
-| `CampaignBudgetService` | Manage campaign budgets |
-| `AdGroupService` | Create/update/remove ad groups |
-| `AdGroupAdService` | Create/update/remove ads |
-| `AdGroupCriterionService` | Keywords and ad-group criteria |
-| `GoogleAdsFieldService` | Inspect fields and metadata for GAQL |
+| Service                   | Main purpose                                         |
+| ------------------------- | ---------------------------------------------------- |
+| `CustomerService`         | Customer/account access and account-level operations |
+| `GoogleAdsService`        | GAQL queries, reporting, search/search stream        |
+| `CampaignService`         | Create/update/remove campaigns                       |
+| `CampaignBudgetService`   | Manage campaign budgets                              |
+| `AdGroupService`          | Create/update/remove ad groups                       |
+| `AdGroupAdService`        | Create/update/remove ads                             |
+| `AdGroupCriterionService` | Keywords and ad-group criteria                       |
+| `GoogleAdsFieldService`   | Inspect fields and metadata for GAQL                 |
 
 ## Important later
 
-| Service | Main purpose |
-|---|---|
-| `AssetService` | Manage creative assets |
-| `CampaignAssetService` | Associate assets with campaigns |
+| Service                    | Main purpose                      |
+| -------------------------- | --------------------------------- |
+| `AssetService`             | Manage creative assets            |
+| `CampaignAssetService`     | Associate assets with campaigns   |
 | `CampaignCriterionService` | Campaign-level criteria/targeting |
-| `ConversionActionService` | Manage conversion actions |
-| `ConversionUploadService` | Upload offline conversions |
-| `GeoTargetConstantService` | Geo targeting constants |
-| `RecommendationService` | Google recommendations |
+| `ConversionActionService`  | Manage conversion actions         |
+| `ConversionUploadService`  | Upload offline conversions        |
+| `GeoTargetConstantService` | Geo targeting constants           |
+| `RecommendationService`    | Google recommendations            |
 
 ## Advanced / specialized
 
-| Area | Examples |
-|---|---|
+| Area            | Examples                                          |
+| --------------- | ------------------------------------------------- |
 | Performance Max | `AssetGroupService`, related asset-group services |
-| Experiments | `ExperimentService`, `ExperimentArmService` |
-| User access | `CustomerUserAccessService`, invitation service |
-| Billing | `BillingSetupService`, account-budget services |
+| Experiments     | `ExperimentService`, `ExperimentArmService`       |
+| User access     | `CustomerUserAccessService`, invitation service   |
+| Billing         | `BillingSetupService`, account-budget services    |
 
 Do not try to learn all of these at once. The core learning path is much smaller.
 
@@ -1353,6 +1348,7 @@ Use the official Google documentation as the final source of truth because API v
 - Campaign creation: https://developers.google.com/google-ads/api/docs/campaigns/create-campaigns
 - Campaign budgets: https://developers.google.com/google-ads/api/docs/campaigns/budgets/overview
 - v25 reference: https://developers.google.com/google-ads/api/reference/rpc/v25/overview
+- Google Ads Delivery_method \_deperaction status : ads-developers.googleblog.com/2020/01/complete-sunset-of-accelerated-budget.html
 
 ---
 
