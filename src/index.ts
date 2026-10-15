@@ -2,12 +2,14 @@
 import express from "express";
 import "dotenv/config";
 
-import accountRoutes from "./routes/account.routes.js";
-import budgetRoutes from "./routes/budget.routes.js";
-import campaignRoutes from "./routes/campaign.routes.js";
+import accountRouter from "./routes/account.routes.js";
+import budgetRouter from "./routes/budget.routes.js";
+import campaignRouter from "./routes/campaign.routes.js";
 import biddingRouter from "./routes/bidding.routes.js";
 import adsGroupRouter from "./routes/adsGroup.routes.js";
-import assetsRouter from './routes/assets.routes.js';
+import assetsRouter from './routes/assets.routes.js'
+import searchTermRouter from './routes/searchTermNegativeKeywordReport.js';
+import conversionRouter from './routes/conversionReport.routes.js';
 import { loadTokens } from "./google_config.js";
 
 
@@ -28,9 +30,11 @@ app.use("/google-ads", adsGroupRouter);
 app.use('/google-ads', assetsRouter);
 
 // Application routes
-app.use(accountRoutes);
-app.use(campaignRoutes);
-app.use(budgetRoutes);
+app.use(accountRouter);
+app.use(campaignRouter);
+app.use(budgetRouter);
+app.use(searchTermRouter)
+app.use(conversionRouter)
 
 // Home route
 app.get("/", async (_req, res) => {

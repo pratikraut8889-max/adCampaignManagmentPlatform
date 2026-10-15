@@ -1,4 +1,3 @@
-
 import { Router, Request, Response } from "express";
 import { getAccessToken } from "../google_config.js";
 import { escapeGaqlString, getGoogleAdsConfig, getErrorMessage, GoogleAdsResult, googleAdsRequest, isValidId, GOOGLE_ADS_BASE_URL, AdGroupUpdate } from '../helper/shared.js'
@@ -1431,6 +1430,762 @@ router.delete(
     },
 );
 
+
+/**
+ * GET /google-ads/reports/ad-groups
+ *
+ * Returns ad-group performance for the last 30 days.
+ * Mount this router in your Express app, or move the route into your
+ * existing Google Ads reports router if that is how your project is organized.
+ */
+router.get(
+    "/google-ads/reports/ad-groups",
+    async (_req: Request, res: Response): Promise<void> => {
+        try {
+            const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
+            const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+
+            if (!customerId || !developerToken) {
+                res.status(500).json({
+                    success: false,
+                    message:
+                        "Missing GOOGLE_ADS_CUSTOMER_ID or GOOGLE_ADS_DEVELOPER_TOKEN environment variable.",
+                });
+                return;
+            }
+
+            const accessToken = await getAccessToken();
+
+            const query = `
+        SELECT
+          customer.currency_code,
+          campaign.id,
+          campaign.name,
+          ad_group.id,
+          ad_group.name,
+          ad_group.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.ctr,
+          metrics.cost_micros,
+          metrics.average_cpc,
+          metrics.conversions,
+          metrics.conversions_from_interactions_rate,
+          metrics.cost_per_conversion,
+          metrics.conversions_value
+        FROM ad_group
+        WHERE segments.date DURING LAST_30_DAYS
+          AND campaign.status != 'REMOVED'
+          AND ad_group.status != 'REMOVED'
+        ORDER BY metrics.clicks DESC
+      `;
+
+            const apiResponse = await fetch(
+                `https://googleads.googleapis.com/v25/customers/${customerId}/googleAds:search`,
+                {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        "developer-token": developerToken,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ query }),
+                }
+            );
+
+            const data: any = await apiResponse.json();
+
+            if (!apiResponse.ok) {
+                res.status(apiResponse.status).json({
+                    success: false,
+                    message: "Google Ads API request failed.",
+                    details: data,
+                });
+                return;
+            }
+
+            const rows: any[] = data.results ?? [];
+
+            const adGroups = rows.map((row) => {
+                const metrics = row.metrics ?? {};
+
+                const impressions = Number(metrics.impressions ?? 0);
+                const clicks = Number(metrics.clicks ?? 0);
+                const cost = Number(metrics.costMicros ?? 0) / 1_000_000;
+                const averageCpc =
+                    Number(metrics.averageCpc ?? 0) / 1_000_000;
+                const conversions = Number(metrics.conversions ?? 0);
+                const conversionValue = Number(metrics.conversionsValue ?? 0);
+                const costPerConversion =
+                    Number(metrics.costPerConversion ?? 0) / 1_000_000;
+
+                return {
+                    campaign: {
+                        id: row.campaign.id,
+                        name: row.campaign.name,
+                    },
+                    adGroup: {
+                        id: row.adGroup.id,
+                        name: row.adGroup.name,
+                        status: row.adGroup.status,
+                    },
+                    currencyCode: row.customer.currencyCode,
+                    metrics: {
+                        impressions,
+                        clicks,
+                        ctrPercent: Number(metrics.ctr ?? 0) * 100,
+                        cost: Number(cost.toFixed(2)),
+                        averageCpc: Number(averageCpc.toFixed(2)),
+                        conversions,
+                        conversionRatePercent:
+                            Number(metrics.conversionsFromInteractionsRate ?? 0) * 100,
+                        costPerConversion: Number(costPerConversion.toFixed(2)),
+                        conversionValue,
+                        // ROAS is conversion value divided by ad cost, not profit.
+                        roas: cost > 0 ? Number((conversionValue / cost).toFixed(2)) : 0,
+                    },
+                };
+            });
+
+            res.status(200).json({
+                success: true,
+                dateRange: "LAST_30_DAYS",
+                totalAdGroups: adGroups.length,
+                adGroups,
+            });
+        } catch (error: unknown) {
+            console.error("Ad group report error:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch ad-group performance.",
+            });
+        }
+    }
+);
+
+
+const GOOGLE_ADS_API_VERSION = "v25";
+const MAX_DATE_RANGE_DAYS = 366;
+
+type KeywordRow = Record<string, any>;
+
+type DateRange = {
+    startDate: string;
+    endDate: string;
+    days: number;
+};
+
+class GoogleAdsApiError extends Error {
+    status: number;
+    details: unknown;
+
+    constructor(status: number, details: unknown) {
+        super("Google Ads API request failed");
+        this.status = status;
+        this.details = details;
+    }
+}
+
+function isValidDate(value: unknown): value is string {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return false;
+    }
+
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function dateDifferenceInDays(startDate: string, endDate: string): number {
+    const start = Date.parse(`${startDate}T00:00:00.000Z`);
+    const end = Date.parse(`${endDate}T00:00:00.000Z`);
+    return Math.floor((end - start) / 86_400_000) + 1;
+}
+
+function addDays(dateString: string, days: number): string {
+    const date = new Date(`${dateString}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().slice(0, 10);
+}
+
+function validateDateRange(
+    startDate: unknown,
+    endDate: unknown
+): { range?: DateRange; error?: string } {
+    if (!isValidDate(startDate) || !isValidDate(endDate)) {
+        return {
+            error: "Provide valid startDate and endDate in YYYY-MM-DD format.",
+        };
+    }
+
+    if (startDate > endDate) {
+        return { error: "startDate must be on or before endDate." };
+    }
+
+    const days = dateDifferenceInDays(startDate, endDate);
+
+    if (days > MAX_DATE_RANGE_DAYS) {
+        return { error: `Date range cannot exceed ${MAX_DATE_RANGE_DAYS} days.` };
+    }
+
+    return { range: { startDate, endDate, days } };
+}
+
+function getPreviousDateRange(range: DateRange): DateRange {
+    const previousEndDate = addDays(range.startDate, -1);
+    const previousStartDate = addDays(previousEndDate, -(range.days - 1));
+
+    return {
+        startDate: previousStartDate,
+        endDate: previousEndDate,
+        days: range.days,
+    };
+}
+
+function numberValue(value: unknown): number {
+    const result = Number(value ?? 0);
+    return Number.isFinite(result) ? result : 0;
+}
+
+function normalizeKeywordRow(row: KeywordRow) {
+    const metrics = row.metrics ?? {};
+    const cost = numberValue(metrics.costMicros) / 1_000_000;
+    const clicks = numberValue(metrics.clicks);
+    const impressions = numberValue(metrics.impressions);
+    const conversions = numberValue(metrics.conversions);
+    const conversionValue = numberValue(metrics.conversionsValue);
+
+    return {
+        campaign: {
+            id: String(row.campaign?.id ?? ""),
+            name: String(row.campaign?.name ?? ""),
+        },
+        adGroup: {
+            id: String(row.adGroup?.id ?? ""),
+            name: String(row.adGroup?.name ?? ""),
+        },
+        keyword: {
+            criterionId: String(row.adGroupCriterion?.criterionId ?? ""),
+            text: String(row.adGroupCriterion?.keyword?.text ?? ""),
+            matchType: String(row.adGroupCriterion?.keyword?.matchType ?? ""),
+            status: String(row.adGroupCriterion?.status ?? ""),
+        },
+        date: row.segments?.date as string | undefined,
+        currencyCode: String(row.customer?.currencyCode ?? ""),
+        metrics: {
+            impressions,
+            clicks,
+            ctrPercent: numberValue(metrics.ctr) * 100,
+            cost: Number(cost.toFixed(2)),
+            averageCpc: Number(
+                (numberValue(metrics.averageCpc) / 1_000_000).toFixed(2)
+            ),
+            conversions,
+            conversionRatePercent:
+                numberValue(metrics.conversionsFromInteractionsRate) * 100,
+            costPerConversion: Number(
+                (numberValue(metrics.costPerConversion) / 1_000_000).toFixed(2)
+            ),
+            conversionValue,
+            // ROAS = conversion value / ad cost; it is not profit.
+            roas: cost > 0 ? Number((conversionValue / cost).toFixed(2)) : 0,
+        },
+    };
+}
+
+function buildKeywordQuery(
+    dateFilter: string,
+    includeDateSegment = false
+): string {
+    return `
+    SELECT
+      customer.currency_code,
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      ad_group_criterion.criterion_id,
+      ad_group_criterion.keyword.text,
+      ad_group_criterion.keyword.match_type,
+      ad_group_criterion.status,
+      ${includeDateSegment ? "segments.date," : ""}
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.cost_micros,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.interactions,
+      metrics.conversions_from_interactions_rate,
+      metrics.cost_per_conversion,
+      metrics.conversions_value
+    FROM keyword_view
+    WHERE ${dateFilter}
+      AND campaign.status != 'REMOVED'
+      AND ad_group.status != 'REMOVED'
+      AND ad_group_criterion.status != 'REMOVED'
+    ORDER BY metrics.clicks DESC
+  `;
+}
+
+async function fetchKeywordRows(
+    query: string,
+    accessToken: string,
+    customerId: string,
+    developerToken: string
+): Promise<KeywordRow[]> {
+    const response = await fetch(
+        `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:search`,
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "developer-token": developerToken,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ query }),
+        }
+    );
+
+    const data: any = await response.json();
+
+    if (!response.ok) {
+        throw new GoogleAdsApiError(response.status, data);
+    }
+
+    return data.results ?? [];
+}
+
+function getCredentials() {
+    const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/-/g, "");
+    const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+
+    if (!customerId || !developerToken) {
+        throw new Error(
+            "Missing GOOGLE_ADS_CUSTOMER_ID or GOOGLE_ADS_DEVELOPER_TOKEN environment variable."
+        );
+    }
+
+    return { customerId, developerToken };
+}
+
+function sendRouteError(res: Response, error: unknown): void {
+    if (error instanceof GoogleAdsApiError) {
+        res.status(error.status).json({
+            success: false,
+            message: error.message,
+            details: error.details,
+        });
+        return;
+    }
+
+    console.error("Google Ads keyword report error:", error);
+
+    const message =
+        error instanceof Error ? error.message : "Unexpected server error.";
+
+    const isConfigurationError = message.startsWith("Missing GOOGLE_ADS_");
+
+    res.status(isConfigurationError ? 500 : 500).json({
+        success: false,
+        message: isConfigurationError
+            ? message
+            : "Failed to fetch Google Ads keyword report.",
+    });
+}
+
+function keywordIdentity(row: ReturnType<typeof normalizeKeywordRow>): string {
+    return `${row.campaign.id}:${row.adGroup.id}:${row.keyword.criterionId}`;
+}
+
+function aggregateKeywordRows(rows: KeywordRow[]) {
+    const map = new Map<string, any>();
+
+    for (const rawRow of rows) {
+        const normalized = normalizeKeywordRow(rawRow);
+        const key = keywordIdentity(normalized);
+
+        if (!map.has(key)) {
+            map.set(key, {
+                ...normalized,
+                date: undefined,
+                metrics: {
+                    impressions: 0,
+                    clicks: 0,
+                    ctrPercent: 0,
+                    cost: 0,
+                    averageCpc: 0,
+                    conversions: 0,
+                    conversionRatePercent: 0,
+                    costPerConversion: 0,
+                    conversionValue: 0,
+                    roas: 0,
+                },
+                _costMicros: 0,
+                _averageCpcMicrosWeighted: 0,
+                _costPerConversionMicros: 0,
+                _conversionRateWeighted: 0,
+                _interactions: 0,
+            });
+        }
+
+        const item = map.get(key);
+        const metrics = rawRow.metrics ?? {};
+        const costMicros = numberValue(metrics.costMicros);
+        const clicks = numberValue(metrics.clicks);
+        const impressions = numberValue(metrics.impressions);
+        const conversions = numberValue(metrics.conversions);
+
+        item.metrics.impressions += impressions;
+        item.metrics.clicks += clicks;
+        item.metrics.conversions += conversions;
+        item.metrics.conversionValue += numberValue(metrics.conversionsValue);
+        item._costMicros += costMicros;
+        item._averageCpcMicrosWeighted += numberValue(metrics.averageCpc) * clicks;
+        item._costPerConversionMicros += numberValue(metrics.costPerConversion) * conversions;
+        const interactions = numberValue(metrics.interactions);
+        item._interactions += interactions;
+        item._conversionRateWeighted +=
+            numberValue(metrics.conversionsFromInteractionsRate) * interactions;
+    }
+
+    return [...map.values()].map((item) => {
+        const cost = item._costMicros / 1_000_000;
+        const clicks = item.metrics.clicks;
+        const impressions = item.metrics.impressions;
+        const conversions = item.metrics.conversions;
+
+        item.metrics.ctrPercent =
+            impressions > 0 ? (clicks / impressions) * 100 : 0;
+        item.metrics.cost = Number(cost.toFixed(2));
+        item.metrics.averageCpc = Number(
+            (clicks > 0 ? item._averageCpcMicrosWeighted / clicks / 1_000_000 : 0).toFixed(2)
+        );
+        item.metrics.costPerConversion = Number(
+            (conversions > 0 ? cost / conversions : 0).toFixed(2)
+        );
+        item.metrics.conversionRatePercent =
+            item._interactions > 0
+                ? Number(((item._conversionRateWeighted / item._interactions) * 100).toFixed(2))
+                : 0;
+        item.metrics.roas =
+            cost > 0
+                ? Number((item.metrics.conversionValue / cost).toFixed(2))
+                : 0;
+
+        delete item._costMicros;
+        delete item._averageCpcMicrosWeighted;
+        delete item._costPerConversionMicros;
+        delete item._conversionRateWeighted;
+        delete item._interactions;
+
+        return item;
+    });
+}
+
+function sortKeywordRows(rows: any[], sortBy: string) {
+    const allowedSorts = [
+        "clicks",
+        "impressions",
+        "conversions",
+        "cost",
+        "roas",
+        "ctr",
+        "cpc",
+        "cpa",
+    ];
+
+    if (!allowedSorts.includes(sortBy)) {
+        throw new Error(`sortBy must be one of: ${allowedSorts.join(", ")}.`);
+    }
+
+    const metricMap: Record<string, string> = {
+        clicks: "clicks",
+        impressions: "impressions",
+        conversions: "conversions",
+        cost: "cost",
+        roas: "roas",
+        ctr: "ctrPercent",
+        cpc: "averageCpc",
+        cpa: "costPerConversion",
+    };
+
+    const metric = metricMap[sortBy];
+
+    return [...rows].sort(
+        (a, b) => numberValue(b.metrics[metric]) - numberValue(a.metrics[metric])
+    );
+}
+
+/**
+ * GET /google-ads/reports/keywords
+ * All non-removed keyword rows, aggregated over LAST_30_DAYS.
+ */
+router.get(
+    "/google-ads/reports/keywords",
+    async (_req: Request, res: Response): Promise<void> => {
+        try {
+            const { customerId, developerToken } = getCredentials();
+            const accessToken = await getAccessToken();
+            const rows = await fetchKeywordRows(
+                buildKeywordQuery("segments.date DURING LAST_30_DAYS"),
+                accessToken,
+                customerId,
+                developerToken
+            );
+
+            const keywords = rows.map(normalizeKeywordRow);
+
+            res.json({
+                success: true,
+                dateRange: "LAST_30_DAYS",
+                totalKeywords: keywords.length,
+                keywords,
+            });
+        } catch (error) {
+            sendRouteError(res, error);
+        }
+    }
+);
+
+/**
+ * GET /google-ads/reports/keywords/range?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ * Aggregated keyword metrics for a custom date range.
+ */
+router.get(
+    "/google-ads/reports/keywords/range",
+    async (req: Request, res: Response): Promise<void> => {
+        try {
+            const validation = validateDateRange(req.query.startDate, req.query.endDate);
+
+            if (validation.error || !validation.range) {
+                res.status(400).json({ success: false, message: validation.error });
+                return;
+            }
+
+            const { startDate, endDate, days } = validation.range;
+            const { customerId, developerToken } = getCredentials();
+            const accessToken = await getAccessToken();
+            const rows = await fetchKeywordRows(
+                buildKeywordQuery(
+                    `segments.date BETWEEN '${startDate}' AND '${endDate}'`
+                ),
+                accessToken,
+                customerId,
+                developerToken
+            );
+
+            const keywords = aggregateKeywordRows(rows);
+
+            res.json({
+                success: true,
+                dateRange: { startDate, endDate, days },
+                totalKeywords: keywords.length,
+                keywords,
+            });
+        } catch (error) {
+            sendRouteError(res, error);
+        }
+    }
+);
+
+/**
+ * GET /google-ads/reports/keywords/daily-trends?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ * One row per keyword per date.
+ */
+router.get(
+    "/google-ads/reports/keywords/daily-trends",
+    async (req: Request, res: Response): Promise<void> => {
+        try {
+            const validation = validateDateRange(req.query.startDate, req.query.endDate);
+
+            if (validation.error || !validation.range) {
+                res.status(400).json({ success: false, message: validation.error });
+                return;
+            }
+
+            const { startDate, endDate, days } = validation.range;
+            const { customerId, developerToken } = getCredentials();
+            const accessToken = await getAccessToken();
+            const rows = await fetchKeywordRows(
+                buildKeywordQuery(
+                    `segments.date BETWEEN '${startDate}' AND '${endDate}'`,
+                    true
+                ),
+                accessToken,
+                customerId,
+                developerToken
+            );
+
+            const dailyRows = rows.map(normalizeKeywordRow);
+
+            res.json({
+                success: true,
+                dateRange: { startDate, endDate, days },
+                totalRows: dailyRows.length,
+                dailyRows,
+            });
+        } catch (error) {
+            sendRouteError(res, error);
+        }
+    }
+);
+
+/**
+ * GET /google-ads/reports/keywords/top?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&sortBy=conversions&limit=10
+ * sortBy: clicks | impressions | conversions | cost | roas | ctr | cpc | cpa
+ */
+router.get(
+    "/google-ads/reports/keywords/top",
+    async (req: Request, res: Response): Promise<void> => {
+        try {
+            const validation = validateDateRange(req.query.startDate, req.query.endDate);
+
+            if (validation.error || !validation.range) {
+                res.status(400).json({ success: false, message: validation.error });
+                return;
+            }
+
+            const sortBy = String(req.query.sortBy ?? "conversions").toLowerCase();
+            const rawLimit = Number(req.query.limit ?? 10);
+            const limit = Number.isFinite(rawLimit)
+                ? Math.min(100, Math.max(1, Math.floor(rawLimit)))
+                : 10;
+
+            const { startDate, endDate, days } = validation.range;
+            const { customerId, developerToken } = getCredentials();
+            const accessToken = await getAccessToken();
+            const rows = await fetchKeywordRows(
+                buildKeywordQuery(
+                    `segments.date BETWEEN '${startDate}' AND '${endDate}'`
+                ),
+                accessToken,
+                customerId,
+                developerToken
+            );
+
+            const aggregated = aggregateKeywordRows(rows);
+            const sorted = sortKeywordRows(aggregated, sortBy);
+            const keywords = sorted.slice(0, limit);
+
+            res.json({
+                success: true,
+                dateRange: { startDate, endDate, days },
+                sortBy,
+                limit,
+                totalKeywords: aggregated.length,
+                keywords,
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "";
+            if (message.startsWith("sortBy must be one of:")) {
+                res.status(400).json({ success: false, message });
+                return;
+            }
+            sendRouteError(res, error);
+        }
+    }
+);
+
+/**
+ * GET /google-ads/reports/keywords/compare?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ * Compares the selected range with the immediately preceding equal-length range.
+ */
+router.get(
+    "/google-ads/reports/keywords/compare",
+    async (req: Request, res: Response): Promise<void> => {
+        try {
+            const validation = validateDateRange(req.query.startDate, req.query.endDate);
+
+            if (validation.error || !validation.range) {
+                res.status(400).json({ success: false, message: validation.error });
+                return;
+            }
+
+            const currentRange = validation.range;
+            const previousRange = getPreviousDateRange(currentRange);
+            const { customerId, developerToken } = getCredentials();
+            const accessToken = await getAccessToken();
+
+            const [currentRaw, previousRaw] = await Promise.all([
+                fetchKeywordRows(
+                    buildKeywordQuery(
+                        `segments.date BETWEEN '${currentRange.startDate}' AND '${currentRange.endDate}'`
+                    ),
+                    accessToken,
+                    customerId,
+                    developerToken
+                ),
+                fetchKeywordRows(
+                    buildKeywordQuery(
+                        `segments.date BETWEEN '${previousRange.startDate}' AND '${previousRange.endDate}'`
+                    ),
+                    accessToken,
+                    customerId,
+                    developerToken
+                ),
+            ]);
+
+            const current = aggregateKeywordRows(currentRaw);
+            const previous = aggregateKeywordRows(previousRaw);
+            const previousMap = new Map(
+                previous.map((row) => [keywordIdentity(row), row])
+            );
+
+            const compareFields = [
+                "impressions",
+                "clicks",
+                "ctrPercent",
+                "cost",
+                "averageCpc",
+                "conversions",
+                "conversionRatePercent",
+                "costPerConversion",
+                "conversionValue",
+                "roas",
+            ] as const;
+
+            const keywords = current.map((currentRow) => {
+                const previousRow = previousMap.get(keywordIdentity(currentRow));
+
+                const comparison: Record<string, any> = {};
+
+                for (const field of compareFields) {
+                    const currentValue = numberValue(currentRow.metrics[field]);
+                    const previousValue = numberValue(previousRow?.metrics[field]);
+                    comparison[field] = {
+                        current: currentValue,
+                        previous: previousValue,
+                        change: Number((currentValue - previousValue).toFixed(2)),
+                        changePercent:
+                            previousValue !== 0
+                                ? Number((((currentValue - previousValue) / Math.abs(previousValue)) * 100).toFixed(2))
+                                : null,
+                    };
+                }
+
+                return {
+                    campaign: currentRow.campaign,
+                    adGroup: currentRow.adGroup,
+                    keyword: currentRow.keyword,
+                    currencyCode: currentRow.currencyCode,
+                    metrics: comparison,
+                };
+            });
+
+            res.json({
+                success: true,
+                currentRange,
+                previousRange,
+                totalKeywords: keywords.length,
+                keywords,
+                note: "Keywords with activity only in the previous period are not included in this response.",
+            });
+        } catch (error) {
+            sendRouteError(res, error);
+        }
+    }
+);
 
 
 
