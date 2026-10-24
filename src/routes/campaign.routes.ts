@@ -1,5 +1,6 @@
 import express from 'express';
 import { getAccessToken } from '../google_config.js'
+import { parseMutationMode } from "../helper/safety.js";
 const router = express.Router();
 type CampaignType =
     | "SEARCH"
@@ -266,8 +267,12 @@ router.post("/google-ads/campaigns/create", async (req, res) => {
         const {
             budgetResourceName,
             campaignName,
-            validateOnly = true,
         } = req.body;
+        const mode = parseMutationMode(req.body);
+        if (mode.error) {
+            return res.status(400).json({ message: mode.error });
+        }
+        const validateOnly = mode.validateOnly;
 
         if (!budgetResourceName) {
             return res.status(400).json({
@@ -373,7 +378,8 @@ router.get("/google-ads/campaigns", async (_req, res) => {
         }
 
         return res.json({
-            capaigns: data,
+            campaigns: data,
+            capaigns: data, // deprecated misspelling, kept so existing clients keep working
         });
     } catch (error) {
         console.error("Google Ads error:", error);
@@ -414,8 +420,12 @@ router.post("/google-ads/campaigns/campaign", async (req, res) => {
             });
         }
 
-        // Default to safe validation mode.
-        const validateOnly = req.body?.validateOnly ?? true;
+        // Validation only by default; live changes need two explicit flags.
+        const mode = parseMutationMode(req.body);
+        if (mode.error) {
+            return res.status(400).json({ message: mode.error });
+        }
+        const validateOnly = mode.validateOnly;
 
         const newStatus = status.toUpperCase();
 
@@ -479,7 +489,12 @@ router.post("/google-ads/campaigns/campaign", async (req, res) => {
 
 router.post("/google-ads/campaigns/rename", async (req, res) => {
     try {
-        const { campaignId, name, validateOnly = true } = req.body;
+        const { campaignId, name } = req.body;
+        const mode = parseMutationMode(req.body);
+        if (mode.error) {
+            return res.status(400).json({ message: mode.error });
+        }
+        const validateOnly = mode.validateOnly;
 
         if (!campaignId) {
             return res.status(400).json({
@@ -595,8 +610,12 @@ router.post("/google-ads/campaigns/:campaignId/target-cpa", async (req, res) => 
         const resourceName =
             `customers/${customerId}/campaigns/${campaignId}`;
 
-        // Safety: validation only. No live changes.
-        const validateOnly = req.body.validateOnly ?? true;
+        // Validation only by default; live changes need two explicit flags.
+        const mode = parseMutationMode(req.body);
+        if (mode.error) {
+            return res.status(400).json({ message: mode.error });
+        }
+        const validateOnly = mode.validateOnly;
 
         const response = await fetch(
             `https://googleads.googleapis.com/v25/customers/${customerId}/campaigns:mutate`,
@@ -631,8 +650,9 @@ router.post("/google-ads/campaigns/:campaignId/target-cpa", async (req, res) => 
         }
 
         return res.json({
-            message:
-                "Target CPA request validated. No changes were applied.",
+            message: validateOnly
+                ? "Target CPA request validated. No changes were applied."
+                : "Target CPA updated successfully.",
             validateOnly,
             campaignId,
             targetCpa,
@@ -651,45 +671,7 @@ router.post("/google-ads/campaigns/:campaignId/target-cpa", async (req, res) => 
     }
 });
 
-router.get(
-    "/google-ads/campaigns/setup-options",
-    (req, res) => {
-        const rawType = String(req.query.campaignType ?? "")
-            .trim()
-            .toUpperCase();
-
-        if (rawType && !(rawType in CAMPAIGN_SETUP)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid campaign type",
-                supportedTypes: Object.keys(CAMPAIGN_SETUP),
-            });
-        }
-
-        const campaignTypes = Object.entries(
-            CAMPAIGN_SETUP
-        ).map(([value, config]) => ({
-            value,
-            ...config,
-        }));
-
-        if (!rawType) {
-            return res.json({
-                success: true,
-                campaignTypes,
-            });
-        }
-
-        const config =
-            CAMPAIGN_SETUP[rawType as CampaignType];
-
-        return res.json({
-            success: true,
-            campaignType: rawType,
-            ...config,
-        });
-    }
-);
+// (duplicate GET /google-ads/campaigns/setup-options registration removed)
 
 router.get("/google-ads/reports/overview", async (_req, res) => {
     try {

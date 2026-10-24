@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { getAccessToken } from "../google_config.js";
 import { escapeGaqlString, getGoogleAdsConfig, getErrorMessage, GoogleAdsResult, googleAdsRequest, isValidId, GOOGLE_ADS_BASE_URL, AdGroupUpdate } from '../helper/shared.js'
+import { parseMutationMode } from "../helper/safety.js";
 
 const router = Router();
 
@@ -564,9 +565,21 @@ router.post("/ad-groups/:adGroupId/keywords", async (req: Request, res: Response
     try {
         const config = getGoogleAdsConfig(res);
         if (!config) return;
-        const { keywords, finalURl, validateOnly } = req.body;
-        const accessToken = await getAccessToken();
+        const { keywords } = req.body;
+        const mode = parseMutationMode(req.body);
+        if (mode.error) {
+            return res.status(400).json({ message: mode.error });
+        }
+        const validateOnly = mode.validateOnly;
         const adGroupId = req.params.adGroupId;
+
+        if (!isValidId(String(adGroupId))) {
+            return res.status(400).json({
+                message: "adGroupId must contain digits only.",
+            });
+        }
+
+        const accessToken = await getAccessToken();
 
         if (!Array.isArray(keywords) || keywords.length === 0) {
             return res.status(400).json({
@@ -641,23 +654,41 @@ router.patch(
     async (req: Request, res: Response) => {
         try {
             const { adGroupId, criterionId } = req.params;
-            const { status, validateOnly } = req.body;
+            const { status } = req.body;
+            const mode = parseMutationMode(req.body);
+            if (mode.error) {
+                return res.status(400).json({ message: mode.error });
+            }
+            const validateOnly = mode.validateOnly;
+
+            if (!isValidId(String(adGroupId)) || !isValidId(String(criterionId))) {
+                return res.status(400).json({
+                    message: "adGroupId and criterionId must contain digits only.",
+                });
+            }
+
+            if (status !== "ENABLED" && status !== "PAUSED") {
+                return res.status(400).json({
+                    message: "status must be ENABLED or PAUSED.",
+                });
+            }
+
             const config = getGoogleAdsConfig(res);
-            const accessToken = await getAccessToken();
             if (!config) return;
+            const accessToken = await getAccessToken();
 
             const { response, data } = await googleAdsRequest(
                 `${GOOGLE_ADS_BASE_URL}/${config.customerId}/adGroupCriteria:mutate`,
                 accessToken,
                 config.developerToken,
                 {
-                    operations: {
+                    operations: [{
                         update: {
                             resourceName: `customers/${config.customerId}/adGroupCriteria/${adGroupId}~${criterionId}`,
                             status: status,
                         },
                         updateMask: 'status'
-                    }, validateOnly
+                    }], validateOnly
                 },
             );
 
@@ -913,11 +944,11 @@ router.post(
 
 
             if (
-                descriptions.every(
+                !descriptions.every(
                     (item: unknown) =>
                         typeof item == "string" &&
                         item.trim().length > 0 &&
-                        item.trim().length <= 50
+                        item.trim().length <= 90
                 )
             ) {
                 return res.status(400).json({

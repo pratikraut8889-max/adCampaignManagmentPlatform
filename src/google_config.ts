@@ -20,6 +20,8 @@ export async function saveTokens(tokens: {
     recursive: true,
   });
 
+  cachedAccessToken = null; // new credentials: never serve an old token
+
   const existing = await loadTokens();
 
   const updated = {
@@ -40,7 +42,15 @@ export async function loadTokens(): Promise<any> {
   }
 }
 
+// Access tokens last about an hour. Reuse one instead of asking Google for a
+// new token (and rewriting the token file) on every API call.
+let cachedAccessToken: { token: string; expiresAt: number } | null = null;
+
 export async function getAccessToken(): Promise<string> {
+  if (cachedAccessToken && cachedAccessToken.expiresAt - 60_000 > Date.now()) {
+    return cachedAccessToken.token;
+  }
+
   const tokens = await loadTokens();
 
   if (!tokens.refresh_token) {
@@ -68,9 +78,17 @@ export async function getAccessToken(): Promise<string> {
     Refresh token remains stored.
   */
 
+  const expiryDate = tokenResponse?.data?.expiry_date;
+
+  cachedAccessToken = {
+    token,
+    expiresAt:
+      typeof expiryDate === "number" ? expiryDate : Date.now() + 50 * 60_000,
+  };
+
   await saveTokens({
     access_token: token,
-    expiry_date: tokenResponse?.data?.expiry_date,
+    expiry_date: expiryDate,
   });
 
   return token;
@@ -82,7 +100,8 @@ const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
 const redirectUri = process.env.YOUTUBE_REDIRECT_URI;
 
 if (!clientId || !clientSecret || !redirectUri) {
-  throw new Error("YouTube OAuth configuration is missing");
+  // Do not crash the whole server: only the YouTube routes need this.
+  console.warn("YouTube OAuth is not configured. YouTube routes will not work.");
 }
 
 export const youtubeOAuth = new google.auth.OAuth2(

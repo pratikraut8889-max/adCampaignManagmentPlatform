@@ -840,6 +840,30 @@ router.post(
       const description =
         String(req.body.videoDescription || "").trim();
 
+      // Uploads publish to a real YouTube channel and have no validate-only
+      // mode, so they need an explicit confirmation. Form fields arrive as
+      // strings, so accept "true" as well as true.
+      const confirmed =
+        req.body.confirm === true || req.body.confirm === "true";
+
+      if (!confirmed) {
+        await unlink(req.file.path).catch(() => undefined);
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Uploading creates a real YouTube video. Send confirm=true to continue.",
+        });
+      }
+
+      // Default to private. Only publish publicly when asked.
+      const requestedPrivacy = String(req.body.privacyStatus || "private");
+      const privacyStatus = ["private", "unlisted", "public"].includes(
+        requestedPrivacy,
+      )
+        ? requestedPrivacy
+        : "private";
+
       const response = await youtube.videos.insert({
         part: ["snippet", "status"],
 
@@ -850,7 +874,7 @@ router.post(
           },
 
           status: {
-            privacyStatus: "public",
+            privacyStatus,
           },
         },
 

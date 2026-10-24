@@ -154,7 +154,13 @@ router.get("/youtube/oauth2callback", async (req, res) => {
             );
         }
 
-        // Development only: check your backend terminal.
+        // Development only. Tokens are never printed in production.
+        if (process.env.NODE_ENV === "production") {
+            return res.send(
+                "YouTube authorization successful. The token is not displayed in production."
+            );
+        }
+
         console.log(
             "YOUTUBE_REFRESH_TOKEN=",
             tokens.refresh_token

@@ -1,20 +1,22 @@
 
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import "dotenv/config";
 
 import accountRouter from "./routes/account.routes.js";
-import budgetRouter from "./routes/budget.routes.js";
-import campaignRouter from "./routes/campaign.routes.js";
+import budgetRouter from "../src/routes/budget.routes.js";
+import campaignRouter from "../src/routes/campaign.routes.js";
 import biddingRouter from "./routes/bidding.routes.js";
-import adsGroupRouter from "./routes/adsGroup.routes.js";
+import adsGroupRouter from "../src/routes/adsGroup.routes.js";
 import assetsRouter from './routes/assets.routes.js'
 import searchTermRouter from './routes/searchTermNegativeKeywordReport.js';
 import conversionRouter from './routes/conversionReport.routes.js';
+import adRetrievalRouter from "./routes/adRetrieval.routes.js";
 import { loadTokens } from "./google_config.js";
 
 
 
 const app = express();
+app.disable("x-powered-by");
 const PORT = Number(process.env.PORT) || 5000;
 
 
@@ -28,6 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/google-ads", biddingRouter);
 app.use("/google-ads", adsGroupRouter);
 app.use('/google-ads', assetsRouter);
+app.use("/google-ads", adRetrievalRouter);
 
 // Application routes
 app.use(accountRouter);
@@ -63,7 +66,7 @@ app.get("/", async (_req, res) => {
           ${connected
         ? `
                 <p>Google Ads refresh token is already stored.</p>
-                <a href="/google-ads/accounts">
+                <a href="/accounts">
                   Get Accessible Google Ads Accounts
                 </a>
               `
@@ -81,6 +84,25 @@ app.get("/", async (_req, res) => {
 
     res.status(500).send("Unable to check Google Ads connection status.");
   }
+});
+
+// Health check
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+// Unknown routes
+app.use((_req, res) => {
+  res.status(404).json({ message: "Route not found." });
+});
+
+// Last-resort error handler: never leak internals to the client.
+app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("Unhandled error:", error);
+
+  if (res.headersSent) return;
+
+  res.status(500).json({ message: "An unexpected error occurred." });
 });
 
 // Start server

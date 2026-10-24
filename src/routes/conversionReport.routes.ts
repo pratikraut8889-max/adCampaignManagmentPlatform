@@ -166,7 +166,7 @@ router.get("/google-ads/reports/conversions/campaigns", async (_req: Request, re
       data: rows.map(mapCampaign),
     });
   } catch (error) {
-    con
+    console.error("Conversion report error:", error);
     handleError(res, error);
   }
 });

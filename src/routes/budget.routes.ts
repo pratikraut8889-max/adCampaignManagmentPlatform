@@ -1,5 +1,6 @@
 import express from "express";
 import { getAccessToken } from "../google_config.js";
+import { parseMutationMode } from "../helper/safety.js";
 const router = express.Router();
 
 // campaign Budget Management service API
@@ -39,6 +40,7 @@ router.get("/google-ads/budgets", async (_req, res) => {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
+					"developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({ query }),
@@ -120,7 +122,12 @@ router.post("/google-ads/budgets/create", async (req, res) => {
 			});
 		}
 
-		const { name, amount, validateOnly = true } = req.body;
+		const { name, amount } = req.body;
+		const mode = parseMutationMode(req.body);
+		if (mode.error) {
+		    return res.status(400).json({ message: mode.error });
+		}
+		const validateOnly = mode.validateOnly;
 
 		if (amount <= 0) {
 			return res.status(400).json({
@@ -199,7 +206,11 @@ router.post("/google-ads/budgets/update", async (req, res) => {
 
 		// Validation-only is the default.
 		// A real update requires an explicit JSON boolean false.
-		const validateOnly = req.body?.validateOnly !== false;
+		const mode = parseMutationMode(req.body);
+		if (mode.error) {
+		    return res.status(400).json({ message: mode.error });
+		}
+		const validateOnly = mode.validateOnly;
 
 		if (typeof budgetId !== "string") {
 			return res.status(400).json({
@@ -246,6 +257,7 @@ router.post("/google-ads/budgets/update", async (req, res) => {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
+					"developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({
@@ -328,6 +340,7 @@ router.get("/google-ads/campaign-budget-assignments", async (_req, res) => {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
+					"developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({ query }),
@@ -429,6 +442,7 @@ router.post("/google-ads/campaigns/assign-budget", async (req, res) => {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
+					"developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({
@@ -525,6 +539,7 @@ router.post("/google-ads/budgets/remove", async (req, res) => {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
+					"developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({ query }),
@@ -582,6 +597,7 @@ router.post("/google-ads/budgets/remove", async (req, res) => {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${accessToken}`,
+					"developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify({

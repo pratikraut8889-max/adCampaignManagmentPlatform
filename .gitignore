@@ -1,4 +1,9 @@
 node_modules
 .env
-data/google-token.json
+.env.*
+!.env.example
+data/
 dist
+*.zip
+*.docx
+code.txt
