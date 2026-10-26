@@ -1,19 +1,19 @@
 import "dotenv/config";
 import express from "express";
 import session from "express-session";
-import authRoutes from "../routes/auth.routes.js";
-import metaRoutes from "../routes/meta.routes.js";
-import campaignRoutes from "../routes/campaign.routes.js";
-import adSetRoutes from "../routes/adset.routes.js";
-import biddingRoutes from "../routes/bidding.routes.js";
-import performanceGoalRoutes from "../routes/performance-goal.routes.js";
-import billingEventRoutes from "../routes/billing-event.routes.js";
-import adsetConfigurationRoutes from "../routes/adset-configuration.routes.js";
-import adImagesRouter from "../routes/adimages.routes.js";
+import authRoutes from "./routes/auth.routes.js";
+import metaRoutes from "./routes/meta.routes.js";
+import campaignRoutes from "./routes/campaign.routes.js";
+import adSetRoutes from "./routes/adset.routes.js";
+import biddingRoutes from "./routes/bidding.routes.js";
+import performanceGoalRoutes from "./routes/performance-goal.routes.js";
+import billingEventRoutes from "./routes/billing-event.routes.js";
+import adsetConfigurationRoutes from "./routes/adset-configuration.routes.js";
+import adImagesRouter from "./routes/adimages.routes.js";
 import fs from "node:fs";
 import path from "node:path";
-import adCreativesRouter from "../routes/adcreatives.routes.js";
-import videoUploadRoutes from "../routes/video-upload.routes.js";
+import adCreativesRouter from "./routes/adcreatives.routes.js";
+import videoUploadRoutes from "./routes/video-upload.routes.js";
 
 
 const app = express();

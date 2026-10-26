@@ -41,7 +41,7 @@ router.post(
     "/meta/ad-accounts/:adAccountId/ads",
     async (req: Request, res: Response) => {
         try {
-            const { adAccountId } = req.params;
+            const { adAccountId }: any = req.params;
             const { name, adSetId, creativeId } = req.body;
 
             // 1. Validate required fields
