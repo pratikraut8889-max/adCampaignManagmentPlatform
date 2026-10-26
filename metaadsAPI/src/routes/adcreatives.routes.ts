@@ -109,7 +109,7 @@ router.post(
     "/meta/ad-accounts/:adAccountId/adcreatives",
     async (req: Request, res: Response) => {
         try {
-            const { adAccountId } = req.params;
+            const { adAccountId }: any = req.params;
 
             const {
                 pageId,
@@ -196,7 +196,7 @@ router.post(
 
             const accessToken = readAccessToken();
 
-            const result = await createAdCreativeInMeta(
+            const result: any = await createAdCreativeInMeta(
                 metaAdAccountId,
                 accessToken,
                 String(pageId),

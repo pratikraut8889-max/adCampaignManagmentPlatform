@@ -163,7 +163,7 @@ router.get(
                 `${videoId}?${params.toString()}`;
 
             const metaResponse = await fetch(url);
-            const result = await metaResponse.json();
+            const result: any = await metaResponse.json();
 
             if (!metaResponse.ok || result.error) {
                 return res.status(502).json({

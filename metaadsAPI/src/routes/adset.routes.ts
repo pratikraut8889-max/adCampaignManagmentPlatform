@@ -672,11 +672,11 @@ router.post(
                 },
             });
 
-            const currentData = await readResponse.json();
+            const currentData: any = await readResponse.json();
             console.log("Existing Ad Set targeting:", JSON.stringify({
-  status: currentData.status,
-  targeting: currentData.targeting,
-}, null, 2));
+                status: currentData.status,
+                targeting: currentData.targeting,
+            }, null, 2));
 
             if (!readResponse.ok) {
                 console.error(
@@ -778,26 +778,26 @@ router.post(
 
             // 12. Merge changes into the existing targeting object.
             const updatedTargeting = {
-  ...existingTargeting,
-  geo_locations: {
-    ...existingTargeting.geo_locations,
-    countries,
-  },
-};
+                ...existingTargeting,
+                geo_locations: {
+                    ...existingTargeting.geo_locations,
+                    countries,
+                },
+            };
 
-// Advantage+ audience: update the age suggestion,
-// rather than changing the existing age controls.
-if (ageMin !== undefined || ageMax !== undefined) {
-  const currentAgeRange = existingTargeting.age_range ?? [
-    existingTargeting.age_min ?? 18,
-    existingTargeting.age_max ?? 65,
-  ];
+            // Advantage+ audience: update the age suggestion,
+            // rather than changing the existing age controls.
+            if (ageMin !== undefined || ageMax !== undefined) {
+                const currentAgeRange = existingTargeting.age_range ?? [
+                    existingTargeting.age_min ?? 18,
+                    existingTargeting.age_max ?? 65,
+                ];
 
-  updatedTargeting.age_range = [
-    ageMin ?? currentAgeRange[0],
-    ageMax ?? currentAgeRange[1],
-  ];
-}
+                updatedTargeting.age_range = [
+                    ageMin ?? currentAgeRange[0],
+                    ageMax ?? currentAgeRange[1],
+                ];
+            }
             if (countries !== undefined) {
                 updatedTargeting.geo_locations = {
                     ...existingGeoLocations,

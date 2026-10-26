@@ -64,7 +64,7 @@ async function metaRequest(
         body: body,
     });
 
-    const data = await response.json();
+    const data: any = await response.json();
 
     if (!response.ok || data.error) {
         const error = new Error(
@@ -113,7 +113,7 @@ router.post(
     async (req: Request, res: Response) => {
         try {
             const accessToken = readAccessToken();
-            const { adSetId }: any  = req.params;
+            const { adSetId }: any = req.params;
 
             const { bidStrategy, bidAmountRupees } = req.body as {
                 bidStrategy?: BidStrategy;
