@@ -1,6 +1,5 @@
 import { Router } from "express";
-import path from "node:path";
-import fs from "node:fs/promises";
+import readAccessToken from "../config.js";
 const router = Router();
 
 const {
@@ -22,32 +21,6 @@ interface MetaApiResult {
     data: Record<string, unknown>;
 }
 
-/**
- * Read the Meta access token from the local token.json file.
- */
-async function readAccessToken(): Promise<string | undefined> {
-    try {
-        const tokenFile = path.join(
-            import.meta.dirname,
-            "..",
-            "data",
-            "token.json",
-        );
-
-        const fileContents = await fs.readFile(
-            tokenFile,
-            "utf-8",
-        );
-
-        const tokenData = JSON.parse(fileContents) as {
-            access_token?: string;
-        };
-
-        return tokenData.access_token;
-    } catch {
-        return undefined;
-    }
-}
 
 /**
  * Read Ad Set details required for billing-event validation.

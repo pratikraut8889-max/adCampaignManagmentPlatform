@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
-import fs from "node:fs";
-import path from "node:path";
+import readAccessToken from "../config.js";
+
 
 const router = Router();
 
@@ -18,48 +18,6 @@ const GRAPH_API_VERSION =
 
 // Read the token from the existing token file.
 // Supports common property names without returning the token to the client.
-function readAccessToken(): string {
-    const tokenPath = path.join(
-        process.cwd(),
-        "data",
-        "token.json"
-    );
-
-    if (!fs.existsSync(tokenPath)) {
-        throw new Error("Token file not found: data/token.json");
-    }
-
-    const parsed: unknown = JSON.parse(
-        fs.readFileSync(tokenPath, "utf-8")
-    );
-
-    if (typeof parsed === "string" && parsed.trim()) {
-        return parsed.trim();
-    }
-
-    if (typeof parsed !== "object" || parsed === null) {
-        throw new Error("Invalid token file format");
-    }
-
-    const tokenData = parsed as {
-        access_token?: unknown;
-        accessToken?: unknown;
-        token?: unknown;
-    };
-
-    const token =
-        tokenData.access_token ??
-        tokenData.accessToken ??
-        tokenData.token;
-
-    if (typeof token !== "string" || !token.trim()) {
-        throw new Error(
-            "Access token not found in data/token.json"
-        );
-    }
-
-    return token.trim();
-}
 
 interface MetaImageUploadResponse {
     images?: Record<

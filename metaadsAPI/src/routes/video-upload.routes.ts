@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import fs from "node:fs";
 import path from "node:path";
+import readAccessToken from "../config.js";
 
 const router = Router();
 
@@ -27,24 +28,7 @@ interface MetaVideoResponse {
     };
 }
 
-function readAccessToken(): string {
-    const tokenPath = path.join(
-        process.cwd(),
-        "data",
-        "token.json"
-    );
 
-    const tokenData = JSON.parse(
-        fs.readFileSync(tokenPath, "utf8")
-    );
-
-    // Adjust this property if your token.json uses another shape.
-    if (!tokenData.access_token) {
-        throw new Error("Access token missing from token.json");
-    }
-
-    return tokenData.access_token;
-}
 
 router.post(
     "/meta/ad-accounts/:adAccountId/advideos",

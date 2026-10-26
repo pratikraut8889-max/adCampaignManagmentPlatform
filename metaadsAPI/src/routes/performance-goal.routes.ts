@@ -1,17 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import fs from "fs";
-import path from "path";
+import readAccessToken from "../config.js";
 
 const router = Router();
 
 const META_GRAPH_API_VERSION =
     process.env.META_GRAPH_API_VERSION || "v25.0";
 
-const TOKEN_FILE_PATH = path.join(
-    process.cwd(),
-    "data",
-    "token.json"
-);
+
 
 const PERFORMANCE_GOALS_BY_OBJECTIVE: Record<string, string[]> = {
     OUTCOME_AWARENESS: [
@@ -120,24 +115,6 @@ async function validatePerformanceGoalInMeta(
     }
 }
 
-// Shared utility: read access token
-function readAccessToken(): string {
-    if (!fs.existsSync(TOKEN_FILE_PATH)) {
-        throw new Error("Meta token file was not found.");
-    }
-
-    const tokenData = JSON.parse(
-        fs.readFileSync(TOKEN_FILE_PATH, "utf-8")
-    );
-
-    if (!tokenData.access_token) {
-        throw new Error(
-            "The token file does not contain access_token."
-        );
-    }
-
-    return tokenData.access_token;
-}
 
 async function getCampaignObjectiveFromMeta(
     campaignId: string,

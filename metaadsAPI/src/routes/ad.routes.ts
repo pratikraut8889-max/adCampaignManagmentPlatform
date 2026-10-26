@@ -1,8 +1,6 @@
 
 import { Router, type Request, type Response } from "express";
-import fs from "node:fs";
-import path from "node:path";
-
+import readAccessToken from "../config.js";
 const router = Router();
 
 const GRAPH_API_VERSION =
@@ -19,23 +17,6 @@ interface MetaAdResponse {
     };
 }
 
-function readAccessToken(): string {
-    const tokenPath = path.join(
-        process.cwd(),
-        "data",
-        "token.json"
-    );
-
-    const tokenData = JSON.parse(
-        fs.readFileSync(tokenPath, "utf8")
-    );
-
-    if (!tokenData.access_token) {
-        throw new Error("Access token missing from token.json");
-    }
-
-    return tokenData.access_token;
-}
 
 router.post(
     "/meta/ad-accounts/:adAccountId/ads",

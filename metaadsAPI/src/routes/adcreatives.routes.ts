@@ -1,52 +1,13 @@
 import { Router, type Request, type Response } from "express";
-import fs from "node:fs";
-import path from "node:path";
+import readAccessToken from "../config.js";
+
 
 const router = Router();
 
 const GRAPH_API_VERSION =
     process.env.META_GRAPH_API_VERSION || "v25.0";
 
-function readAccessToken(): string {
-    const tokenPath = path.join(
-        process.cwd(),
-        "data",
-        "token.json"
-    );
 
-    if (!fs.existsSync(tokenPath)) {
-        throw new Error("Token file not found");
-    }
-
-    const parsed: unknown = JSON.parse(
-        fs.readFileSync(tokenPath, "utf-8")
-    );
-
-    if (typeof parsed === "string" && parsed.trim()) {
-        return parsed.trim();
-    }
-
-    if (typeof parsed !== "object" || parsed === null) {
-        throw new Error("Invalid token file format");
-    }
-
-    const tokenData = parsed as {
-        access_token?: unknown;
-        accessToken?: unknown;
-        token?: unknown;
-    };
-
-    const token =
-        tokenData.access_token ??
-        tokenData.accessToken ??
-        tokenData.token;
-
-    if (typeof token !== "string" || !token.trim()) {
-        throw new Error("Access token not found");
-    }
-
-    return token.trim();
-}
 
 interface MetaCreativeResponse {
     id?: string;

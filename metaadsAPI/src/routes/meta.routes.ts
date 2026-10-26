@@ -1,20 +1,9 @@
 import { Router } from "express";
-import path from "node:path";
-import fs from "node:fs/promises";
+import readAccessToken from "../config.js";
 
 const router = Router();
 const { META_GRAPH_API_VERSION = "v25.0" } = process.env;
 
-async function readAccessToken(): Promise<string | undefined> {
-    try {
-        const tokenFile = path.join(import.meta.dirname, "..", "data", "token.json");
-        const fileContents = await fs.readFile(tokenFile, "utf-8");
-        const tokenData = JSON.parse(fileContents) as { access_token?: string };
-        return tokenData.access_token;
-    } catch {
-        return undefined;
-    }
-}
 
 router.get("/meta/ad-accounts", async (_req, res) => {
     const accessToken = await readAccessToken();

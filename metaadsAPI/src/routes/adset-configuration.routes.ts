@@ -1,22 +1,11 @@
 
 import express, { type Request, type Response } from "express";
-import fs from "node:fs";
-import path from "node:path";
+import readAccessToken from "../config.js";
+
 
 const router = express.Router();
 
-function readAccessToken(): string {
-    const tokenPath = path.resolve(process.cwd(), "data/token.json");
-    const tokenData = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
 
-    const accessToken = tokenData.access_token;
-
-    if (!accessToken || typeof accessToken !== "string") {
-        throw new Error("Access token is missing from data/token.json");
-    }
-
-    return accessToken;
-}
 
 function getGraphApiBaseUrl(): string {
     const version = process.env.META_GRAPH_API_VERSION || "v25.0";

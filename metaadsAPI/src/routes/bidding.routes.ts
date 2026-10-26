@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import fs from "fs";
 import path from "path";
+import readAccessToken from "../config.js";
 
 const router = Router();
 
@@ -13,19 +13,7 @@ type BidStrategy =
     | "COST_CAP"
     | "LOWEST_COST_WITH_BID_CAP";
 
-function readAccessToken(): string {
-    if (!fs.existsSync(TOKEN_FILE_PATH)) {
-        throw new Error("Meta token file was not found.");
-    }
 
-    const tokenData = JSON.parse(fs.readFileSync(TOKEN_FILE_PATH, "utf-8"));
-
-    if (!tokenData.access_token) {
-        throw new Error("The token file does not contain access_token.");
-    }
-
-    return tokenData.access_token;
-}
 
 async function metaRequest(
     adSetId: string,
