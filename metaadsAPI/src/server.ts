@@ -16,6 +16,8 @@ import adImagesRouter from "./routes/adimages.routes.js";
 
 import adCreativesRouter from "./routes/adcreatives.routes.js";
 import videoUploadRoutes from "./routes/video-upload.routes.js";
+import adsRouter from "./routes/ad.routes.js";
+
 const app = express();
 const {
     PORT = "3000",
@@ -64,7 +66,36 @@ app.get("/", async (_req, res) => {
     
   `);
 });
-
+app.get('/privacy', (req, res) => {
+    res.send(`
+    <html>
+      <head>
+        <title>Privacy Policy - Meta Ads API App</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }
+          h1 { color: #1877f2; }
+        </style>
+      </head>
+      <body>
+        <h1>Privacy Policy</h1>
+        <p>Last updated: October 26, 2026</p>
+        <p>At api_learning, accessible from https://meta-marketing-api.onrender.com, we respect your privacy and are committed to protecting any information you share with us.</p>
+        
+        <h2>1. Information We Collect</h2>
+        <p>Our application interacts with the Meta Ads API solely to manage campaigns, ad sets, ads, and ad creatives as authorized by you.</p>
+        
+        <h2>2. How We Use Information</h2>
+        <p>The data accessed via the Meta API is used exclusively to facilitate advertising management features within your application dashboard. We do not sell, rent, or share your data with third parties.</p>
+        
+        <h2>3. Data Security</h2>
+        <p>We implement standard security measures to protect your information against unauthorized access or disclosure.</p>
+        
+        <h2>4. Contact Us</h2>
+        <p>If you have any questions about this Privacy Policy, you can contact us at your email.</p>
+      </body>
+    </html>
+  `);
+});
 // Keep route handlers and their business logic in the routes folder.
 app.use(authRoutes);
 app.use(metaRoutes);
@@ -77,7 +108,7 @@ app.use(adsetConfigurationRoutes);
 app.use(adImagesRouter);
 app.use(adCreativesRouter);
 app.use(videoUploadRoutes);
-
+app.use(adsRouter);
 app.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
 });

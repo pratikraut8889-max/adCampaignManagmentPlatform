@@ -3,6 +3,7 @@ import path from "node:path";
 
 function readAccessToken(): any {
     const dataDir = path.resolve(process.cwd(), "data");
+    console.log(`Reading access token from: ${dataDir}`);
     const tokenPath = path.join(dataDir, "token.json");
 
     try {
@@ -30,6 +31,8 @@ function readAccessToken(): any {
         if (!accessToken || typeof accessToken !== "string") {
             return null;
         }
+        console.log("token loaded:: ", accessToken);
+        
 
         return accessToken;
     } catch (error: any) {

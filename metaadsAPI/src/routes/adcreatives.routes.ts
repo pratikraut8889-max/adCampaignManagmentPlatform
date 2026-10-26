@@ -208,4 +208,72 @@ router.post(
     }
 );
 
+
+// / GET: List all Ad Creatives for an Ad Account
+router.get(
+    "/meta/ad-accounts/:adAccountId/adcreatives",
+    async (req: Request, res: Response) => {
+        try {
+            const { adAccountId }: any = req.params;
+
+            // Normalize the ad account ID format
+            const normalizedAccountId = adAccountId.startsWith("act_")
+                ? adAccountId
+                : `act_${adAccountId}`;
+
+            if (!/^act_\d+$/.test(normalizedAccountId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: "Invalid ad account ID format.",
+                });
+            }
+
+            const accessToken = readAccessToken();
+            const params = new URLSearchParams();
+            params.set("access_token", accessToken);
+            params.set(
+                "fields",
+                "id,name,status,object_story_spec,asset_feed_spec"
+            );
+
+            // Clean unified template string composition to prevent parsing/routing failures
+            const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${normalizedAccountId}/adcreatives?${params.toString()}`;
+
+            const metaResponse = await fetch(url, {
+                method: "GET",
+            });
+
+            const result: any = (await metaResponse.json());
+
+            if (!metaResponse.ok || result.error) {
+                return res.status(502).json({
+                    success: false,
+                    error: result.error?.message || "Failed to fetch ad creatives from Meta.",
+                    metaErrorType: result.error?.type,
+                    metaErrorCode: result.error?.code,
+                    metaErrorSubcode: result.error?.error_subcode,
+                    fbtraceId: result.error?.fbtrace_id,
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                adCreatives: result.data || [],
+            });
+        } catch (error) {
+            console.error("Fetch ad creatives list error:", error);
+
+            return res.status(500).json({
+                success: false,
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Unexpected server error.",
+            });
+        }
+    }
+);
+
+
+
 export default router;
