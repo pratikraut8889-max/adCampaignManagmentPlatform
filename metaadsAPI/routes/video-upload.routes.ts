@@ -138,13 +138,11 @@ router.post(
     }
 );
 
-
-
 router.get(
     "/meta/videos/:videoId/status",
     async (req: Request, res: Response) => {
         try {
-            const { videoId } = req.params;
+            const { videoId }: any = req.params;
 
             if (!/^\d+$/.test(videoId)) {
                 return res.status(400).json({
