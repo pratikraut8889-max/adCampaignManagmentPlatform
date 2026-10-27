@@ -2,3 +2,116 @@
 node_modules/
 data/
 dist/
+
+
+🚨 The Hidden Clock in AdTech: Why Meta and Google are Deleting Your Production History
+
+If your data science models or executive dashboards rely on pulling long-term performance trends directly from ad network APIs, your pipeline is built on a countdown timer.
+Many developers and data engineers don't realize that Meta Ads and Google Ads enforce a hard 37-month data retention cap on their backend servers for granular, atomic data.
+• Meta Ads API: The legacy date_preset: 'lifetime' parameter is deprecated and replaced with maximum. If you query daily or device-level breakdowns older than 3 years, the API returns an empty set.
+• Google Ads API: While aggregated monthly records persist longer, requesting granular data split by daily segments (segments.date) or keyword coordinates older than 37 months throws a hard DateRangeError.
+If your system relies on on-the-fly API querying, you are permanently losing raw historical data every single day on a rolling clock [1].
+
+The Solution: Granular Data Warehousing
+
+To bypass the 37-month server ceiling, engineering teams must transition to an Incremental Granular Data Warehouse Pipeline.
+"Granular" means extracting data at its lowest functional atomic level—broken down by single days, explicit hardware devices, and distribution streams (Facebook vs. Instagram). By capturing these high-density rows and streaming them into an independent analytical engine (like PostgreSQL, BigQuery, or Snowflake), you secure structural control over your dataset.
+Once the data hits your warehouse, it is yours permanently. You can safely run 5- to 6-year lookbacks, compile custom attribution models, and run predictive budgeting routines without hitting third-party API walls.
+
+🛠️ The Production Blueprint: Daily Ingestion Framework
+
+The most resilient approach is deploying an automated ingestion microservice (via cron job or cloud function) that runs nightly at 2:00 AM. Instead of broad, historical pulls that trigger API rate limits, the service queries only "yesterday's" data in a tight, predictable payload and appends it to your storage.
+Here is the decoupled architecture used to handle this task reliably:
+
+1. Meta Ads: Asynchronous Chunking Pipeline
+
+Because synchronous calls with heavy daily breakdowns frequently trigger gateway timeouts, we initiate an asynchronous export job, poll the operational status, and consume the cursor pagination.
+javascript
+import fetch from 'node-fetch';
+
+async function runMetaIncrementalSync(startDate, endDate) {
+  // 1. Initialize an asynchronous report job to safeguard against HTTP timeouts
+  const initUrl = `https://facebook.com`;
+  const response = await fetch(initUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      access_token: process.env.META_ACCESS_TOKEN,
+      level: 'campaign',
+      time_increment: 1, // Restructures payload into distinct daily granular rows
+      time_range: { since: startDate, until: endDate },
+      fields: 'campaign_id,campaign_name,spend,impressions,clicks',
+      breakdowns: 'publisher_platform' // Splits records by Facebook, Instagram, etc.
+    })
+  });
+  
+  const { report_run_id } = await response.json();
+  
+  // 2. Poll the execution state until Meta's server completes the dataset compilation
+  let isReady = false;
+  while (!isReady) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    const statusCheck = await fetch(`https://facebook.com{report_run_id}?access_token=${process.env.META_ACCESS_TOKEN}`);
+    const statusData = await statusCheck.json();
+    if (statusData.async_status === 'Job Completed') isReady = true;
+  }
+
+  // 3. Traverses the data payload using native cursor-based pagination mechanics
+  let fetchUrl = `https://facebook.com{report_run_id}/insights?access_token=${process.env.META_ACCESS_TOKEN}&limit=500`;
+  while (fetchUrl) {
+    const dataResponse = await fetch(fetchUrl);
+    const dataPayload = await dataResponse.json();
+    
+    // PRODUCTION ACTION: Batch insert rows into your staging table
+    // db.collection('meta_raw_history').insertMany(dataPayload.data);
+    
+    fetchUrl = dataPayload.paging?.next || null;
+  }
+}
+Use code with caution.
+
+2. Google Ads: Streamed Ingestion Framework
+
+Google Ads can return millions of segmented keyword and matching rows. Instead of buffering the complete payload into system memory (which risks out-of-memory crashes), we use gRPC streaming to pipeline data records directly from the Google network edge into our target storage engine.
+javascript
+import { GoogleAdsServiceClient } from 'google-ads-api';
+
+const client = new GoogleAdsServiceClient({
+  client_id: process.env.GADS_CLIENT_ID,
+  client_secret: process.env.GADS_CLIENT_SECRET,
+  developer_token: process.env.GADS_DEV_TOKEN
+});
+
+async function streamGoogleAdsToStorage(customerId, startDate, endDate) {
+  const gaqlQuery = `
+    SELECT segments.date, campaign.id, campaign.name, segments.device, metrics.clicks, metrics.impressions, metrics.cost_micros
+    FROM campaign
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+
+  const stream = client.searchStream({ customer_id: customerId, query: gaqlQuery });
+
+  // Stream raw data packets sequentially to guarantee a flat application memory profile
+  stream.on('data', (chunk) => {
+    for (const row of chunk.results) {
+      const normalizedRow = {
+        date: row.segments.date,
+        campaignId: row.campaign.id,
+        campaignName: row.campaign.name,
+        device: row.segments.device,
+        clicks: row.metrics.clicks,
+        impressions: row.metrics.impressions,
+        spend: parseFloat(row.metrics.cost_micros) / 1000000 // Transforms internal Google Micros to decimal currency
+      };
+      // PRODUCTION ACTION: Stream write output pipeline directly to target data lake
+      // dataLakeStream.write(normalizedRow);
+    }
+  });
+}
+Use code with caution.
+
+The Takeaway
+
+Stop treating SaaS ad platforms like static database tables. They are highly aggressive operations caches. If you aren't pulling data granularity into a platform you control, you are dropping your engineering metrics on the floor. Build your ingestion layer today before your history zero-outs.
+
+#DataEngineering #DataWarehouse #BackendDevelopment #MarTech #MarketingAnalytics #NodeJS

@@ -3,7 +3,6 @@ import express from "express";
 import session from "express-session";
 import readAccessToken from "./config.js";
 
-
 import authRoutes from "./routes/auth.routes.js";
 import metaRoutes from "./routes/meta.routes.js";
 import campaignRoutes from "./routes/campaign.routes.js";
@@ -18,46 +17,48 @@ import adCreativesRouter from "./routes/adcreatives.routes.js";
 import videoUploadRoutes from "./routes/video-upload.routes.js";
 import adsRouter from "./routes/ad.routes.js";
 
+import insightsRoutes from "./routes/insights.routes.js";
+import audiencesRoutes from "./routes/audiences.routes.js";
 const app = express();
 const {
-    PORT = "3000",
-    SESSION_SECRET,
-    META_APP_ID,
-    META_APP_SECRET,
-    META_LOGIN_CONFIG_ID,
-    META_REDIRECT_URI,
+  PORT = "3000",
+  SESSION_SECRET,
+  META_APP_ID,
+  META_APP_SECRET,
+  META_LOGIN_CONFIG_ID,
+  META_REDIRECT_URI,
 } = process.env;
 
 if (
-    !SESSION_SECRET ||
-    !META_APP_ID ||
-    !META_APP_SECRET ||
-    !META_LOGIN_CONFIG_ID ||
-    !META_REDIRECT_URI
+  !SESSION_SECRET ||
+  !META_APP_ID ||
+  !META_APP_SECRET ||
+  !META_LOGIN_CONFIG_ID ||
+  !META_REDIRECT_URI
 ) {
-    throw new Error("Missing required settings in .env");
+  throw new Error("Missing required settings in .env");
 }
 
 app.use(express.json());
 
 // For local development only. Use a persistent session store in production.
 app.use(
-    session({
-        secret: SESSION_SECRET,
-        resave: false,
-        saveUninitialized: false,
-        cookie: {
-            httpOnly: true,
-            sameSite: "lax",
-            secure: false, // Local HTTP only; enable HTTPS-secure cookies in production.
-            maxAge: 60 * 60 * 1000,
-        },
-    }),
+  session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false, // Local HTTP only; enable HTTPS-secure cookies in production.
+      maxAge: 60 * 60 * 1000,
+    },
+  }),
 );
 
 app.get("/", async (_req, res) => {
-    const accessToken = await readAccessToken();
-    res.send(`
+  const accessToken = await readAccessToken();
+  res.send(`
  ${accessToken ? `<h1>Meta Ads Sample</h1>
    <p>Access token is available.</p>
     <a href="/auth/meta">Connect Meta Ads</a></p>` : `<h1>Meta Ads Sample</h1>
@@ -67,7 +68,7 @@ app.get("/", async (_req, res) => {
   `);
 });
 app.get('/privacy', (req, res) => {
-    res.send(`
+  res.send(`
     <html>
       <head>
         <title>Privacy Policy - Meta Ads API App</title>
@@ -109,6 +110,10 @@ app.use(adImagesRouter);
 app.use(adCreativesRouter);
 app.use(videoUploadRoutes);
 app.use(adsRouter);
+app.use(insightsRoutes);
+app.use(audiencesRoutes);
+
+
 app.listen(Number(PORT), "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
