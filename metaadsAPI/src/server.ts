@@ -19,6 +19,9 @@ import adsRouter from "./routes/ad.routes.js";
 
 import insightsRoutes from "./routes/insights.routes.js";
 import audiencesRoutes from "./routes/audiences.routes.js";
+import { createAudienceModuleRouter } from "./routes/audience-module.routes.js";
+import metaPixelRoutes from "./routes/meta-pixels.routes.js";
+
 const app = express();
 const {
   PORT = "3000",
@@ -111,8 +114,9 @@ app.use(adCreativesRouter);
 app.use(videoUploadRoutes);
 app.use(adsRouter);
 app.use(insightsRoutes);
-app.use(audiencesRoutes);
-
+// app.use(audiencesRoutes);
+app.use(metaPixelRoutes);
+app.use(createAudienceModuleRouter(readAccessToken));
 
 app.listen(Number(PORT), "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
